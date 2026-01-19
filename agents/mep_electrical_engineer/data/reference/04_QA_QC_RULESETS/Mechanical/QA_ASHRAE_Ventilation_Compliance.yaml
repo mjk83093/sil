@@ -1,0 +1,846 @@
+# QA/QC Rule: ASHRAE 62.1 Ventilation Compliance Validation
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Agent: Ventilation Specialist (Agent 3)
+# Applies to: Mechanical discipline
+# Reference: ASHRAE 62.1-2022, HVAC_Load_Calculations.md ventilation procedures
+# Integration: Links to MECHANICAL/HVAC_Load_Calculations.md ventilation section
+
+rules:
+  - id: QA-ASHRAE-62.1-001
+    description: Validate minimum outdoor air rates per occupancy type (ASHRAE 62.1 Table 6.2.2.1)
+    severity: critical
+    category: ventilation_compliance
+    rationale: Inadequate outdoor air ventilation causes poor indoor air quality, health issues, and code violations. Minimum rates are life-safety requirements.
+    code_reference: ASHRAE 62.1-2022 Table 6.2.2.1 - Minimum Ventilation Rates in Breathing Zone
+    check:
+      type: custom
+      function: validate_outdoor_air_rate
+      params:
+        space_field: hvac_schedule.spaces
+        occupancy_field: space.occupancy_type
+        outdoor_air_field: space.outdoor_air_cfm
+        occupancy_count_field: space.design_occupancy
+        area_field: space.area_sqft
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 6.2.2.1 (simplified - common occupancies)
+      ventilation_rates = {
+        "office": {"cfm_per_person": 5, "cfm_per_sqft": 0.06},
+        "conference_room": {"cfm_per_person": 5, "cfm_per_sqft": 0.06},
+        "classroom": {"cfm_per_person": 10, "cfm_per_sqft": 0.12},
+        "retail": {"cfm_per_person": 7.5, "cfm_per_sqft": 0.12},
+        "restaurant_dining": {"cfm_per_person": 7.5, "cfm_per_sqft": 0.18},
+        "gymnasium": {"cfm_per_person": 20, "cfm_per_sqft": 0.06},
+        "hotel_guest_room": {"cfm_per_person": 5, "cfm_per_sqft": 0.06},
+        "auditorium": {"cfm_per_person": 5, "cfm_per_sqft": 0.06},
+        "corridor": {"cfm_per_person": 0, "cfm_per_sqft": 0.06},
+        "storage": {"cfm_per_person": 0, "cfm_per_sqft": 0.12}
+      }
+
+      FOR EACH space IN hvac_schedule.spaces:
+        occupancy_type = space.occupancy_type
+        IF occupancy_type NOT IN ventilation_rates:
+          WARN: "Unknown occupancy type '{occupancy_type}' - cannot validate ventilation rate"
+          CONTINUE
+
+        rates = ventilation_rates[occupancy_type]
+        required_cfm_people = space.design_occupancy * rates.cfm_per_person
+        required_cfm_area = space.area_sqft * rates.cfm_per_sqft
+        required_cfm_total = required_cfm_people + required_cfm_area
+
+        actual_cfm = space.outdoor_air_cfm
+
+        IF actual_cfm < required_cfm_total:
+          FAIL: "Space '{space.name}' outdoor air {actual_cfm} CFM less than required {required_cfm_total} CFM (ASHRAE 62.1 Table 6.2.2.1)"
+    validation_examples:
+      - scenario: "Office space 1000 sq ft, 10 people, 110 CFM outdoor air provided"
+        space: {occupancy: "office", area: 1000, people: 10, oa_cfm: 110}
+        calculation: "10*5 + 1000*0.06 = 50 + 60 = 110 CFM required"
+        expected_result: PASS
+        rationale: "Meets minimum ventilation rate per ASHRAE 62.1"
+
+      - scenario: "Conference room 400 sq ft, 15 people, 80 CFM outdoor air"
+        space: {occupancy: "conference_room", area: 400, people: 15, oa_cfm: 80}
+        calculation: "15*5 + 400*0.06 = 75 + 24 = 99 CFM required"
+        expected_result: FAIL
+        rationale: "80 CFM provided < 99 CFM required (ASHRAE 62.1)"
+
+      - scenario: "Gymnasium 3000 sq ft, 30 people, 800 CFM outdoor air"
+        space: {occupancy: "gymnasium", area: 3000, people: 30, oa_cfm: 800}
+        calculation: "30*20 + 3000*0.06 = 600 + 180 = 780 CFM required"
+        expected_result: PASS
+        rationale: "800 CFM exceeds 780 CFM requirement"
+
+  - id: QA-ASHRAE-62.1-002
+    description: Validate ventilation effectiveness factors applied correctly (ASHRAE 62.1 Section 6.2.2.2)
+    severity: high
+    category: ventilation_compliance
+    rationale: Ventilation effectiveness (Ez) adjusts outdoor air requirements based on air distribution method. Incorrect factors result in inadequate ventilation.
+    code_reference: ASHRAE 62.1-2022 Section 6.2.2.2, Table 6.2.2.2 - Air Distribution Effectiveness
+    check:
+      type: custom
+      function: validate_ventilation_effectiveness
+      params:
+        space_field: hvac_schedule.spaces
+        air_distribution_field: space.air_distribution_type
+        effectiveness_field: space.ventilation_effectiveness_ez
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 6.2.2.2 - Ventilation Effectiveness
+      effectiveness_values = {
+        "ceiling_supply_ceiling_return": 1.0,
+        "ceiling_supply_floor_return": 1.0,
+        "floor_supply_ceiling_return": 1.0,
+        "floor_supply_floor_return": 1.0,
+        "displacement_ventilation": 1.2,  # Higher effectiveness
+        "underfloor_air_distribution": 1.2,
+        "dedicated_outdoor_air_system": 1.0
+      }
+
+      FOR EACH space IN hvac_schedule.spaces:
+        distribution_type = space.air_distribution_type
+        specified_ez = space.ventilation_effectiveness_ez
+
+        IF distribution_type NOT IN effectiveness_values:
+          WARN: "Unknown air distribution type '{distribution_type}' for space '{space.name}'"
+          CONTINUE
+
+        expected_ez = effectiveness_values[distribution_type]
+
+        IF specified_ez != expected_ez:
+          FAIL: "Space '{space.name}' ventilation effectiveness Ez={specified_ez} incorrect, should be {expected_ez} for {distribution_type} (ASHRAE 62.1 Table 6.2.2.2)"
+    validation_examples:
+      - scenario: "Office with ceiling supply/return, Ez=1.0"
+        space: {distribution: "ceiling_supply_ceiling_return", ez: 1.0}
+        expected_result: PASS
+        rationale: "Ez=1.0 correct for conventional ceiling distribution"
+
+      - scenario: "Lab with displacement ventilation, Ez=1.0 (should be 1.2)"
+        space: {distribution: "displacement_ventilation", ez: 1.0}
+        expected_result: FAIL
+        rationale: "Displacement ventilation has Ez=1.2 per Table 6.2.2.2"
+
+      - scenario: "Conference room with underfloor air, Ez=1.2"
+        space: {distribution: "underfloor_air_distribution", ez: 1.2}
+        expected_result: PASS
+        rationale: "Ez=1.2 correct for UFAD systems"
+
+  - id: QA-ASHRAE-62.1-003
+    description: Validate multi-zone ventilation system diversity factor (ASHRAE 62.1 Section 6.2.5)
+    severity: high
+    category: ventilation_compliance
+    rationale: Multi-zone systems require diversity factor (D) to account for zones peaking at different times. Incorrect calculation undersizes outdoor air.
+    code_reference: ASHRAE 62.1-2022 Section 6.2.5 - Multiple Spaces, Equation 6.2
+    check:
+      type: custom
+      function: validate_multizone_diversity
+      params:
+        system_field: hvac_systems
+        zone_field: system.zones
+        diversity_factor_field: system.ventilation_diversity_D
+    validation_logic: |
+      FOR EACH system IN hvac_systems:
+        IF system.type == "multi_zone":  # VAV, multi-zone constant volume, etc.
+          zones = system.zones
+          IF LENGTH(zones) < 2:
+            CONTINUE  # Single zone system, no diversity factor
+
+          # Calculate system population diversity (D)
+          # D = Ps / Sum(Pz) where Ps = system population, Pz = zone populations
+          system_population_ps = system.design_occupancy_concurrent
+          zone_population_sum = SUM([zone.design_occupancy FOR zone IN zones])
+
+          calculated_D = system_population_ps / zone_population_sum
+          specified_D = system.ventilation_diversity_D
+
+          # D typically ranges 0.60 to 1.0 (1.0 = all zones peak simultaneously)
+          IF calculated_D < 0.6 OR calculated_D > 1.0:
+            WARN: "System '{system.tag}' diversity factor D={calculated_D:.2f} outside typical range (0.6-1.0)"
+
+          IF ABS(specified_D - calculated_D) > 0.05:
+            FAIL: "System '{system.tag}' specified diversity D={specified_D} does not match calculated D={calculated_D:.2f} (ASHRAE 62.1 Eq 6.2)"
+    validation_examples:
+      - scenario: "VAV system serving 5 zones, system population 150, zone sum 200, D=0.75"
+        system: {zones: 5, system_pop: 150, zone_pop_sum: 200, specified_D: 0.75}
+        calculated_D: 0.75
+        expected_result: PASS
+        rationale: "Diversity factor correctly calculated"
+
+      - scenario: "Multi-zone system with D=1.0 but concurrent occupancy suggests D=0.70"
+        system: {system_pop: 100, zone_pop_sum: 143, specified_D: 1.0}
+        calculated_D: 0.70
+        expected_result: FAIL
+        rationale: "Overconservative D=1.0 oversizes outdoor air equipment"
+
+      - scenario: "Single-zone system (no diversity factor needed)"
+        system: {type: "single_zone", zones: 1}
+        expected_result: PASS
+        rationale: "Diversity factor not applicable to single-zone systems"
+
+  - id: QA-ASHRAE-62.1-004
+    description: Validate exhaust requirements for toilet rooms (ASHRAE 62.1 Table 6.2.2.1)
+    severity: critical
+    category: ventilation_compliance
+    rationale: Toilet room exhaust is required to control odors and moisture. Inadequate exhaust causes IAQ complaints and building damage.
+    code_reference: ASHRAE 62.1-2022 Table 6.2.2.1 - Toilet Rooms (Public and Private)
+    check:
+      type: custom
+      function: validate_toilet_exhaust
+      params:
+        space_field: hvac_schedule.spaces
+        occupancy_type: ["toilet_public", "toilet_private"]
+        exhaust_field: space.exhaust_cfm
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 6.2.2.1 Exhaust Requirements
+      toilet_exhaust_requirements = {
+        "toilet_private": {"cfm_per_fixture": 25, "cfm_per_room_min": 50},  # Residential/hotel
+        "toilet_public": {"cfm_per_fixture": 50, "cfm_per_room_min": 70}   # Commercial
+      }
+
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.occupancy_type IN ["toilet_public", "toilet_private"]:
+          toilet_type = space.occupancy_type
+          requirements = toilet_exhaust_requirements[toilet_type]
+
+          fixture_count = space.fixture_count  # water closets + urinals
+          required_cfm = MAX(fixture_count * requirements.cfm_per_fixture, requirements.cfm_per_room_min)
+
+          actual_exhaust = space.exhaust_cfm
+
+          IF actual_exhaust < required_cfm:
+            FAIL: "Toilet room '{space.name}' exhaust {actual_exhaust} CFM less than required {required_cfm} CFM (ASHRAE 62.1 Table 6.2.2.1)"
+
+          # Verify exhaust is continuous or activated by occupancy sensor
+          IF NOT (space.exhaust_continuous OR space.exhaust_occupancy_sensor):
+            WARN: "Toilet room '{space.name}' exhaust should be continuous or have occupancy sensor control"
+    validation_examples:
+      - scenario: "Public restroom with 3 fixtures, 150 CFM exhaust"
+        space: {occupancy: "toilet_public", fixtures: 3, exhaust_cfm: 150}
+        required: "MAX(3*50, 70) = 150 CFM"
+        expected_result: PASS
+        rationale: "Meets minimum exhaust requirement"
+
+      - scenario: "Private bathroom 1 fixture, 40 CFM exhaust"
+        space: {occupancy: "toilet_private", fixtures: 1, exhaust_cfm: 40}
+        required: "MAX(1*25, 50) = 50 CFM"
+        expected_result: FAIL
+        rationale: "40 CFM < 50 CFM minimum for private toilet (ASHRAE 62.1)"
+
+      - scenario: "Public restroom 5 fixtures, 300 CFM exhaust, continuous operation"
+        space: {occupancy: "toilet_public", fixtures: 5, exhaust_cfm: 300, continuous: true}
+        required: "MAX(5*50, 70) = 250 CFM"
+        expected_result: PASS
+        rationale: "Exceeds minimum requirement with proper control"
+
+  - id: QA-ASHRAE-62.1-005
+    description: Validate kitchen/break room exhaust for commercial applications (ASHRAE 62.1 Table 6.2.2.1)
+    severity: high
+    category: ventilation_compliance
+    rationale: Commercial kitchens require exhaust to control cooking odors, heat, and grease-laden vapors. Inadequate exhaust creates IAQ and fire hazards.
+    code_reference: ASHRAE 62.1-2022 Table 6.2.2.1 - Food and Beverage Service, Kitchen (Cooking)
+    check:
+      type: custom
+      function: validate_kitchen_exhaust
+      params:
+        space_field: hvac_schedule.spaces
+        occupancy_type: ["kitchen_commercial", "break_room"]
+        exhaust_field: space.exhaust_cfm
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 6.2.2.1
+      kitchen_requirements = {
+        "kitchen_commercial": {
+          "outdoor_air_cfm_per_sqft": 0.70,
+          "exhaust_cfm_per_sqft": 1.50,  # Default, actual depends on hood design
+          "exhaust_note": "Exhaust rate primarily determined by hood, not table value"
+        },
+        "break_room": {
+          "outdoor_air_cfm_per_person": 7.5,
+          "outdoor_air_cfm_per_sqft": 0.18,
+          "exhaust_note": "Light cooking, not commercial kitchen"
+        }
+      }
+
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.occupancy_type == "kitchen_commercial":
+          # Commercial kitchen - verify hood exhaust present
+          IF NOT space.has_exhaust_hood:
+            FAIL: "Commercial kitchen '{space.name}' must have exhaust hood (ASHRAE 62.1, IMC 507)"
+
+          # Check makeup air provided (typically 80% of exhaust)
+          IF space.makeup_air_cfm < (space.exhaust_cfm * 0.70):
+            WARN: "Commercial kitchen '{space.name}' may need more makeup air (typically 70-100% of exhaust)"
+
+        ELSE IF space.occupancy_type == "break_room":
+          # Break room with light cooking
+          required_oa = (space.design_occupancy * 7.5) + (space.area_sqft * 0.18)
+          IF space.outdoor_air_cfm < required_oa:
+            FAIL: "Break room '{space.name}' outdoor air {space.outdoor_air_cfm} CFM less than {required_oa} CFM (ASHRAE 62.1)"
+    validation_examples:
+      - scenario: "Commercial kitchen with exhaust hood 2000 CFM, makeup air 1600 CFM"
+        space: {occupancy: "kitchen_commercial", hood: true, exhaust: 2000, makeup: 1600}
+        expected_result: PASS
+        rationale: "Exhaust hood present with adequate makeup air (80%)"
+
+      - scenario: "Commercial kitchen without exhaust hood notation"
+        space: {occupancy: "kitchen_commercial", hood: false}
+        expected_result: FAIL
+        rationale: "Commercial kitchens require exhaust hoods per ASHRAE/IMC"
+
+      - scenario: "Break room 400 sq ft, 10 people, 150 CFM outdoor air"
+        space: {occupancy: "break_room", area: 400, people: 10, oa_cfm: 150}
+        required: "10*7.5 + 400*0.18 = 147 CFM"
+        expected_result: PASS
+        rationale: "Meets minimum ventilation for break room"
+
+  - id: QA-ASHRAE-62.1-006
+    description: Validate laboratory/science classroom exhaust requirements (ASHRAE 62.1 Table 6.2.2.1)
+    severity: critical
+    category: ventilation_compliance
+    rationale: Labs require high exhaust rates and negative pressure for chemical safety. Inadequate ventilation creates life-safety hazards.
+    code_reference: ASHRAE 62.1-2022 Table 6.2.2.1 - Laboratories
+    check:
+      type: custom
+      function: validate_lab_ventilation
+      params:
+        space_field: hvac_schedule.spaces
+        occupancy_type: ["laboratory", "science_classroom"]
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 6.2.2.1 - Labs
+      lab_requirements = {
+        "laboratory": {
+          "outdoor_air_cfm_per_person": 10,
+          "outdoor_air_cfm_per_sqft": 0.18,
+          "exhaust_cfm_per_sqft": 1.5,  # Typical, varies by use
+          "air_changes_per_hour_min": 6,
+          "pressure_relationship": "negative",
+          "fume_hood_note": "Fume hood exhaust calculated separately"
+        },
+        "science_classroom": {
+          "outdoor_air_cfm_per_person": 10,
+          "outdoor_air_cfm_per_sqft": 0.18
+        }
+      }
+
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.occupancy_type == "laboratory":
+          requirements = lab_requirements["laboratory"]
+
+          # Check outdoor air rate
+          required_oa = (space.design_occupancy * 10) + (space.area_sqft * 0.18)
+          IF space.outdoor_air_cfm < required_oa:
+            FAIL: "Laboratory '{space.name}' outdoor air insufficient (ASHRAE 62.1)"
+
+          # Check air changes per hour
+          room_volume_cuft = space.area_sqft * space.ceiling_height_ft
+          ach = (space.supply_air_cfm * 60) / room_volume_cuft
+          IF ach < requirements.air_changes_per_hour_min:
+            FAIL: "Laboratory '{space.name}' has {ach:.1f} ACH, minimum 6 ACH required"
+
+          # Check negative pressure relationship
+          IF space.pressure_relationship != "negative":
+            FAIL: "Laboratory '{space.name}' must be negative pressure relative to adjacent spaces"
+    validation_examples:
+      - scenario: "Lab 800 sq ft, 15 people, 300 CFM OA, 1200 CFM supply, 10' ceiling, negative pressure"
+        space: {area: 800, people: 15, oa: 300, supply: 1200, height: 10, pressure: "negative"}
+        required_oa: "15*10 + 800*0.18 = 294 CFM"
+        ach: "(1200*60)/(800*10) = 9 ACH"
+        expected_result: PASS
+        rationale: "Meets all lab ventilation requirements"
+
+      - scenario: "Lab with 4 ACH (insufficient)"
+        space: {supply: 800, area: 800, height: 15}
+        ach: "(800*60)/(800*15) = 4 ACH"
+        expected_result: FAIL
+        rationale: "Labs require minimum 6 ACH"
+
+      - scenario: "Lab with positive pressure"
+        space: {pressure: "positive"}
+        expected_result: FAIL
+        rationale: "Labs must be negative pressure for containment"
+
+  - id: QA-ASHRAE-62.1-007
+    description: Validate demand-controlled ventilation (DCV) sensor requirements (ASHRAE 62.1 Section 6.2.7)
+    severity: medium
+    category: ventilation_compliance
+    rationale: DCV systems require CO2 or occupancy sensors to modulate outdoor air. Incorrect sensor placement or absence violates DCV design assumptions.
+    code_reference: ASHRAE 62.1-2022 Section 6.2.7 - Demand-Controlled Ventilation
+    check:
+      type: custom
+      function: validate_dcv_sensors
+      params:
+        space_field: hvac_schedule.spaces
+        dcv_enabled_field: space.demand_controlled_ventilation
+        sensor_field: space.ventilation_sensors
+    validation_logic: |
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.demand_controlled_ventilation == TRUE:
+          # DCV enabled - verify sensor present
+          IF NOT space.ventilation_sensors.present:
+            FAIL: "Space '{space.name}' has DCV enabled but no CO2 or occupancy sensor specified (ASHRAE 62.1 Section 6.2.7)"
+
+          # Check sensor type appropriate for space
+          sensor_type = space.ventilation_sensors.type
+          IF sensor_type NOT IN ["co2", "occupancy", "combined"]:
+            WARN: "Space '{space.name}' DCV sensor type '{sensor_type}' unusual"
+
+          # Verify sensor location specified
+          IF NOT space.ventilation_sensors.location_specified:
+            WARN: "Space '{space.name}' DCV sensor location should be specified in breathing zone"
+
+          # Check applicability - DCV most effective in variable occupancy spaces
+          IF space.occupancy_variability == "constant":
+            WARN: "Space '{space.name}' has constant occupancy - DCV may not be beneficial"
+    validation_examples:
+      - scenario: "Conference room with DCV, CO2 sensor at breathing zone (4' AFF)"
+        space: {dcv: true, sensor: {present: true, type: "co2", location: "breathing_zone"}}
+        expected_result: PASS
+        rationale: "DCV properly configured with appropriate sensor"
+
+      - scenario: "Auditorium with DCV but no sensor shown on drawings"
+        space: {dcv: true, sensor: {present: false}}
+        expected_result: FAIL
+        rationale: "DCV requires sensor per ASHRAE 62.1 Section 6.2.7"
+
+      - scenario: "Office with DCV and occupancy sensor"
+        space: {dcv: true, sensor: {type: "occupancy", location: "ceiling"}}
+        expected_result: PASS
+        rationale: "Occupancy sensors acceptable for DCV in offices"
+
+  - id: QA-ASHRAE-62.1-008
+    description: Validate minimum outdoor air damper position (ASHRAE 62.1 Section 5.16.3)
+    severity: high
+    category: ventilation_compliance
+    rationale: Outdoor air dampers must have minimum position stops to ensure minimum ventilation when system operates. No minimum = potential code violation.
+    code_reference: ASHRAE 62.1-2022 Section 5.16.3.3 - Minimum Outdoor Air
+    check:
+      type: field_presence
+      fields:
+        - hvac_systems.outdoor_air_damper.minimum_position
+      condition: not null
+      params:
+        system_types: ["ahu", "rtu", "doas"]
+        minimum_position_typical: "15-30%"
+    validation_logic: |
+      FOR EACH system IN hvac_systems:
+        IF system.type IN ["ahu", "rtu", "doas"]:  # Systems with OA dampers
+          IF system.outdoor_air_damper IS NULL:
+            WARN: "System '{system.tag}' should have outdoor air damper noted"
+            CONTINUE
+
+          damper = system.outdoor_air_damper
+          IF damper.minimum_position IS NULL:
+            FAIL: "System '{system.tag}' outdoor air damper missing minimum position stop (ASHRAE 62.1 Section 5.16.3.3)"
+
+          # Verify minimum position is reasonable (typically 10-40% open)
+          min_pos = damper.minimum_position_percent
+          IF min_pos < 10 OR min_pos > 50:
+            WARN: "System '{system.tag}' OA damper minimum position {min_pos}% unusual (typical 10-40%)"
+    validation_examples:
+      - scenario: "AHU with OA damper minimum position 20%"
+        system: {tag: "AHU-1", oa_damper: {min_pos: 20}}
+        expected_result: PASS
+        rationale: "Minimum position specified per ASHRAE 62.1"
+
+      - scenario: "RTU with OA damper but no minimum position noted"
+        system: {tag: "RTU-3", oa_damper: {min_pos: null}}
+        expected_result: FAIL
+        rationale: "Minimum position required to ensure ventilation (Section 5.16.3.3)"
+
+      - scenario: "DOAS unit (100% outdoor air, no minimum position needed)"
+        system: {tag: "DOAS-1", type: "doas", oa_damper: null}
+        expected_result: PASS
+        rationale: "DOAS always 100% OA, minimum position not applicable"
+
+  - id: QA-ASHRAE-62.1-009
+    description: Validate air filtration minimum efficiency (ASHRAE 62.1 Section 5.8)
+    severity: high
+    category: ventilation_compliance
+    rationale: Minimum filtration efficiency required for particulate removal. Lower efficiency results in poor IAQ and health impacts.
+    code_reference: ASHRAE 62.1-2022 Section 5.8, Table 5.8 - Minimum Filter Efficiency
+    check:
+      type: custom
+      function: validate_filter_efficiency
+      params:
+        system_field: hvac_systems
+        filter_field: system.filtration
+        minimum_merv: 6  # ASHRAE 62.1 minimum for recirculated air
+    validation_logic: |
+      # ASHRAE 62.1-2022 Table 5.8 - Minimum Efficiency
+      # For most commercial applications: MERV 6 minimum
+      # Healthcare, labs: MERV 13-16 typical
+
+      FOR EACH system IN hvac_systems:
+        IF system.filtration IS NULL:
+          FAIL: "System '{system.tag}' has no filtration specified (ASHRAE 62.1 Section 5.8)"
+          CONTINUE
+
+        filter_merv = system.filtration.merv_rating
+
+        # Check minimum MERV 6
+        IF filter_merv < 6:
+          FAIL: "System '{system.tag}' filter MERV {filter_merv} less than minimum MERV 6 (ASHRAE 62.1 Section 5.8)"
+
+        # Check for special occupancies requiring higher filtration
+        served_spaces = system.served_spaces
+        FOR EACH space IN served_spaces:
+          IF space.occupancy_type IN ["healthcare", "surgery", "laboratory", "clean_room"]:
+            IF filter_merv < 13:
+              WARN: "System '{system.tag}' serving {space.occupancy_type} should use MERV 13+ filtration"
+    validation_examples:
+      - scenario: "Office AHU with MERV 8 filters"
+        system: {tag: "AHU-2", filtration: {merv: 8}, spaces: ["office"]}
+        expected_result: PASS
+        rationale: "MERV 8 exceeds minimum MERV 6 requirement"
+
+      - scenario: "RTU with MERV 4 filters (below minimum)"
+        system: {tag: "RTU-1", filtration: {merv: 4}}
+        expected_result: FAIL
+        rationale: "MERV 4 below ASHRAE 62.1 minimum of MERV 6"
+
+      - scenario: "Hospital AHU with MERV 14 filters"
+        system: {tag: "AHU-MED1", filtration: {merv: 14}, spaces: ["patient_room"]}
+        expected_result: PASS
+        rationale: "MERV 14 appropriate for healthcare applications"
+
+  - id: QA-ASHRAE-62.1-010
+    description: Validate outdoor air intake location requirements (ASHRAE 62.1 Section 5.5)
+    severity: critical
+    category: ventilation_compliance
+    rationale: Outdoor air intakes must be located away from contamination sources (exhausts, loading docks, parking). Poor location causes IAQ problems.
+    code_reference: ASHRAE 62.1-2022 Section 5.5 - Outdoor Air Intake Location
+    check:
+      type: custom
+      function: validate_oa_intake_location
+      params:
+        system_field: hvac_systems
+        intake_field: system.outdoor_air_intake
+        minimum_clearances:
+          exhaust_horizontal: 10  # feet
+          loading_dock: 25  # feet
+          grade: 3  # feet above grade minimum
+    validation_logic: |
+      FOR EACH system IN hvac_systems:
+        IF system.outdoor_air_intake IS NULL:
+          WARN: "System '{system.tag}' outdoor air intake location not specified"
+          CONTINUE
+
+        intake = system.outdoor_air_intake
+
+        # Check height above grade
+        IF intake.height_above_grade_feet < 3:
+          FAIL: "System '{system.tag}' OA intake {intake.height_above_grade_feet}' above grade, minimum 3' recommended (ASHRAE 62.1 Section 5.5)"
+
+        # Check clearance from exhaust outlets
+        nearby_exhausts = intake.nearby_exhausts
+        FOR EACH exhaust IN nearby_exhausts:
+          IF exhaust.horizontal_distance_feet < 10:
+            FAIL: "System '{system.tag}' OA intake within {exhaust.horizontal_distance_feet}' of exhaust - minimum 10' separation recommended (ASHRAE 62.1 Section 5.5)"
+
+        # Check proximity to loading docks, dumpsters, cooling towers
+        contaminant_sources = intake.nearby_contaminant_sources
+        FOR EACH source IN contaminant_sources:
+          IF source.type == "loading_dock" AND source.distance_feet < 25:
+            WARN: "System '{system.tag}' OA intake within {source.distance_feet}' of loading dock (25' recommended)"
+    validation_examples:
+      - scenario: "OA intake 6' above grade, 15' from nearest exhaust"
+        intake: {height: 6, exhaust_distance: 15}
+        expected_result: PASS
+        rationale: "Adequate clearances per ASHRAE 62.1 Section 5.5"
+
+      - scenario: "OA intake 2' above grade"
+        intake: {height: 2}
+        expected_result: FAIL
+        rationale: "Below minimum 3' above grade recommendation"
+
+      - scenario: "OA intake 8' from toilet exhaust"
+        intake: {exhaust_distance: 8}
+        expected_result: FAIL
+        rationale: "Less than 10' minimum separation from exhaust"
+
+  - id: QA-ASHRAE-62.1-011
+    description: Validate return air pathways from high-contaminant spaces (ASHRAE 62.1 Section 5.16.2)
+    severity: high
+    category: ventilation_compliance
+    rationale: Return air from toilets, locker rooms, janitor closets must not recirculate to other spaces. Prevents odor and contaminant spread.
+    code_reference: ASHRAE 62.1-2022 Section 5.16.2 - Recirculation of Air
+    check:
+      type: custom
+      function: validate_return_air_restrictions
+      params:
+        space_field: hvac_schedule.spaces
+        prohibited_return_spaces: ["toilet", "locker_room", "janitor_closet", "kitchen_commercial"]
+        return_air_field: space.return_air_handling
+    validation_logic: |
+      prohibited_return_occupancies = [
+        "toilet_public", "toilet_private",
+        "locker_room", "shower_room",
+        "janitor_closet", "housekeeping",
+        "kitchen_commercial", "trash_room",
+        "chemical_storage"
+      ]
+
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.occupancy_type IN prohibited_return_occupancies:
+          # These spaces should be 100% exhaust (no return air)
+          IF space.return_air_handling != "exhaust_only":
+            FAIL: "Space '{space.name}' ({space.occupancy_type}) should be 100% exhaust with no return air (ASHRAE 62.1 Section 5.16.2)"
+
+          # Verify exhaust air is not recirculated
+          IF space.return_air_handling == "recirculated":
+            FAIL: "Space '{space.name}' ({space.occupancy_type}) air must not be recirculated (ASHRAE 62.1 Section 5.16.2)"
+    validation_examples:
+      - scenario: "Public restroom with 100% exhaust, no return air"
+        space: {occupancy: "toilet_public", return_handling: "exhaust_only"}
+        expected_result: PASS
+        rationale: "Toilet rooms must be 100% exhaust per ASHRAE 62.1"
+
+      - scenario: "Janitor closet with return air grille"
+        space: {occupancy: "janitor_closet", return_handling: "recirculated"}
+        expected_result: FAIL
+        rationale: "Janitor closets should not have return air (Section 5.16.2)"
+
+      - scenario: "Commercial kitchen with dedicated exhaust"
+        space: {occupancy: "kitchen_commercial", return_handling: "exhaust_only"}
+        expected_result: PASS
+        rationale: "Kitchen exhaust not recirculated"
+
+  - id: QA-ASHRAE-62.1-012
+    description: Validate energy recovery ventilator (ERV) outdoor air bypass (ASHRAE 62.1 Section 5.15)
+    severity: medium
+    category: ventilation_compliance
+    rationale: ERVs must have bypass or freeze protection to prevent frost formation and equipment damage in cold climates.
+    code_reference: ASHRAE 62.1-2022 Section 5.15 - Energy Recovery Ventilation Systems
+    check:
+      type: custom
+      function: validate_erv_bypass
+      params:
+        system_field: hvac_systems
+        system_type: ["erv", "hrv", "energy_recovery"]
+        climate_zone_field: project.climate_zone
+    validation_logic: |
+      FOR EACH system IN hvac_systems:
+        IF system.type IN ["erv", "hrv", "energy_recovery"]:
+          # Check for bypass dampers or controls
+          IF NOT system.has_bypass_dampers:
+            WARN: "System '{system.tag}' ERV/HRV should have bypass dampers for economizer operation and defrost (ASHRAE 62.1 Section 5.15)"
+
+          # In cold climates (zones 5-8), check for freeze protection
+          IF project.climate_zone IN ["5A", "5B", "6A", "6B", "7", "8"]:
+            IF NOT system.has_freeze_protection:
+              FAIL: "System '{system.tag}' ERV in cold climate zone {project.climate_zone} requires freeze protection (preheat or controls)"
+    validation_examples:
+      - scenario: "ERV with bypass dampers and freeze protection in climate zone 5A"
+        system: {type: "erv", bypass: true, freeze_protection: true}, climate: "5A"
+        expected_result: PASS
+        rationale: "ERV properly configured for cold climate"
+
+      - scenario: "HRV in climate zone 6A with no freeze protection"
+        system: {type: "hrv", freeze_protection: false}, climate: "6A"
+        expected_result: FAIL
+        rationale: "Cold climates require freeze protection for ERV/HRV"
+
+      - scenario: "ERV in climate zone 3A (warm) without bypass"
+        system: {type: "erv", bypass: false}, climate: "3A"
+        expected_result: WARN
+        rationale: "Bypass recommended for economizer operation"
+
+  - id: QA-ASHRAE-62.1-013
+    description: Validate ventilation airflow measurement device requirements (ASHRAE 62.1 Section 5.16.3.2)
+    severity: medium
+    category: ventilation_compliance
+    rationale: Outdoor airflow must be measurable to verify compliance with design ventilation rates during TAB and commissioning.
+    code_reference: ASHRAE 62.1-2022 Section 5.16.3.2 - Airflow Measurement
+    check:
+      type: field_presence
+      fields:
+        - hvac_systems.outdoor_air_measurement_device
+      condition: not null
+      params:
+        system_types: ["ahu", "rtu"]
+        device_types: ["airflow_station", "pitot_traverse", "venturi", "differential_pressure"]
+    validation_logic: |
+      FOR EACH system IN hvac_systems:
+        IF system.type IN ["ahu", "rtu"]:
+          IF system.outdoor_air_measurement_device IS NULL:
+            WARN: "System '{system.tag}' should have outdoor airflow measurement device for TAB verification (ASHRAE 62.1 Section 5.16.3.2)"
+          ELSE:
+            device_type = system.outdoor_air_measurement_device.type
+            IF device_type NOT IN ["airflow_station", "pitot_traverse", "venturi", "differential_pressure", "hot_wire_anemometer"]:
+              WARN: "System '{system.tag}' OA measurement device type '{device_type}' unusual"
+    validation_examples:
+      - scenario: "AHU with airflow measurement station in OA duct"
+        system: {tag: "AHU-1", oa_measurement: {type: "airflow_station", location: "OA_duct"}}
+        expected_result: PASS
+        rationale: "Airflow measurement enables TAB verification"
+
+      - scenario: "RTU with no OA measurement device noted"
+        system: {tag: "RTU-2", oa_measurement: null}
+        expected_result: WARN
+        rationale: "OA measurement recommended for commissioning (Section 5.16.3.2)"
+
+      - scenario: "DOAS with venturi-type flow meter"
+        system: {tag: "DOAS-1", oa_measurement: {type: "venturi"}}
+        expected_result: PASS
+        rationale: "Acceptable measurement device for OA verification"
+
+  - id: QA-ASHRAE-62.1-014
+    description: Validate parking garage ventilation rates (ASHRAE 62.1 Section 6.2.8)
+    severity: high
+    category: ventilation_compliance
+    rationale: Enclosed parking garages require continuous or CO-triggered ventilation to control vehicle emissions (CO, NOx). Inadequate ventilation is life-safety hazard.
+    code_reference: ASHRAE 62.1-2022 Section 6.2.8 - Enclosed Parking Garages, IMC 404
+    check:
+      type: custom
+      function: validate_parking_garage_ventilation
+      params:
+        space_field: hvac_schedule.spaces
+        occupancy_type: "parking_garage"
+        ventilation_field: space.ventilation_cfm_per_sqft
+    validation_logic: |
+      # ASHRAE 62.1 Section 6.2.8 + IMC 404
+      # Mechanical ventilation: 0.75 CFM/sq ft (continuous)
+      # Or: CO sensors with variable exhaust
+
+      FOR EACH space IN hvac_schedule.spaces:
+        IF space.occupancy_type == "parking_garage":
+          # Check for mechanical ventilation
+          IF NOT space.has_mechanical_ventilation:
+            FAIL: "Parking garage '{space.name}' requires mechanical ventilation (ASHRAE 62.1 Section 6.2.8)"
+
+          # If continuous ventilation, check rate
+          IF space.ventilation_control == "continuous":
+            required_cfm_per_sqft = 0.75
+            IF space.ventilation_cfm_per_sqft < required_cfm_per_sqft:
+              FAIL: "Parking garage '{space.name}' continuous ventilation {space.ventilation_cfm_per_sqft} CFM/sq ft less than required {required_cfm_per_sqft} (ASHRAE 62.1)"
+
+          # If CO-sensor control, verify sensors specified
+          IF space.ventilation_control == "co_sensor":
+            IF NOT space.has_co_sensors:
+              FAIL: "Parking garage '{space.name}' using CO-sensor control but sensors not specified"
+    validation_examples:
+      - scenario: "Parking garage 10,000 sq ft with continuous ventilation 0.75 CFM/sq ft (7500 CFM total)"
+        space: {occupancy: "parking_garage", area: 10000, control: "continuous", cfm_per_sqft: 0.75}
+        expected_result: PASS
+        rationale: "Meets minimum continuous ventilation rate"
+
+      - scenario: "Parking garage with CO sensor control and sensors specified"
+        space: {occupancy: "parking_garage", control: "co_sensor", co_sensors: true}
+        expected_result: PASS
+        rationale: "CO sensor control acceptable alternative"
+
+      - scenario: "Parking garage with 0.5 CFM/sq ft (below minimum)"
+        space: {occupancy: "parking_garage", control: "continuous", cfm_per_sqft: 0.5}
+        expected_result: FAIL
+        rationale: "Below minimum 0.75 CFM/sq ft requirement"
+
+  - id: QA-ASHRAE-62.1-015
+    description: Validate system outdoor air intake vs zone requirements (ASHRAE 62.1 Equation 6.2)
+    severity: high
+    category: ventilation_compliance
+    rationale: System outdoor air intake must account for distribution losses and zone diversity. Simplistic calculation undersizes outdoor air equipment.
+    code_reference: ASHRAE 62.1-2022 Section 6.2.5, Equation 6.2 - System Outdoor Air Intake Flow
+    check:
+      type: custom
+      function: validate_system_oa_calculation
+      params:
+        system_field: hvac_systems
+        zone_field: system.zones
+        system_oa_field: system.outdoor_air_cfm_system
+    validation_logic: |
+      # ASHRAE 62.1 Equation 6.2:
+      # Vot = D * Sum(Rp * Pz) + Sum(Ra * Az) / Ez
+      # Where:
+      #   Vot = System outdoor air intake (CFM)
+      #   D = Diversity factor (population-based)
+      #   Rp = People outdoor air rate (CFM/person)
+      #   Pz = Zone population
+      #   Ra = Area outdoor air rate (CFM/sq ft)
+      #   Az = Zone area
+      #   Ez = Zone ventilation effectiveness
+
+      FOR EACH system IN hvac_systems:
+        IF system.type == "multi_zone":
+          zones = system.zones
+
+          # Calculate required system OA per Equation 6.2
+          D = system.ventilation_diversity_D  # From QA-ASHRAE-62.1-003
+          sum_rp_pz = 0
+          sum_ra_az_over_ez = 0
+
+          FOR EACH zone IN zones:
+            sum_rp_pz += zone.ventilation_rate_per_person * zone.design_occupancy
+            sum_ra_az_over_ez += (zone.ventilation_rate_per_area * zone.area) / zone.ventilation_effectiveness_ez
+
+          required_vot = (D * sum_rp_pz) + sum_ra_az_over_ez
+          actual_vot = system.outdoor_air_cfm_system
+
+          IF actual_vot < (required_vot * 0.95):  # Allow 5% tolerance
+            FAIL: "System '{system.tag}' outdoor air intake {actual_vot:.0f} CFM less than required {required_vot:.0f} CFM (ASHRAE 62.1 Eq 6.2)"
+    validation_examples:
+      - scenario: "VAV system 5 zones, calculated Vot=3500 CFM, system OA=3600 CFM"
+        system: {zones: 5, calculated_vot: 3500, actual_vot: 3600}
+        expected_result: PASS
+        rationale: "System OA intake exceeds calculated requirement"
+
+      - scenario: "Multi-zone system with 4000 CFM required, 3500 CFM provided"
+        system: {calculated_vot: 4000, actual_vot: 3500}
+        expected_result: FAIL
+        rationale: "System OA undersized per ASHRAE 62.1 Equation 6.2"
+
+      - scenario: "Single-zone system (Equation 6.2 not applicable)"
+        system: {type: "single_zone"}
+        expected_result: PASS
+        rationale: "Single-zone uses simpler calculation"
+
+# Custom Validation Functions (Pseudocode Implementation)
+
+custom_functions:
+  validate_outdoor_air_rate:
+    description: "Validates minimum outdoor air rates per ASHRAE 62.1 Table 6.2.2.1"
+    implementation: |
+      # Implementation shown inline in rule QA-ASHRAE-62.1-001
+
+  validate_ventilation_effectiveness:
+    description: "Validates ventilation effectiveness factors (Ez) per Table 6.2.2.2"
+    implementation: |
+      # Implementation shown inline in rule QA-ASHRAE-62.1-002
+
+  validate_multizone_diversity:
+    description: "Validates diversity factor (D) for multi-zone systems"
+    implementation: |
+      # Implementation shown inline in rule QA-ASHRAE-62.1-003
+
+  validate_toilet_exhaust:
+    description: "Validates toilet room exhaust requirements"
+    implementation: |
+      # Implementation shown inline in rule QA-ASHRAE-62.1-004
+
+  validate_system_oa_calculation:
+    description: "Validates system outdoor air intake using ASHRAE 62.1 Equation 6.2"
+    implementation: |
+      # Implementation shown inline in rule QA-ASHRAE-62.1-015
+
+# Integration with HVAC_Load_Calculations.md
+
+hvac_load_calculations_integration:
+  ventilation_section:
+    description: "This ruleset complements HVAC_Load_Calculations.md Section 2 (Cooling Load) and Section 3 (Heating Load) ventilation procedures"
+    references:
+      - section: "HVAC_Load_Calculations.md Lines 319-443 - Ventilation and Infiltration"
+        integration: "Rules validate calculated CFM values match ASHRAE 62.1 requirements"
+      - section: "HVAC_Load_Calculations.md Lines 421-443 - Outdoor Air Requirements"
+        integration: "Table of ventilation rates by occupancy directly maps to QA-ASHRAE-62.1-001 validation"
+
+  design_workflow:
+    description: "Recommended workflow integrating load calculations and QA validation"
+    steps:
+      - step_1: "Calculate outdoor air requirements per HVAC_Load_Calculations.md (ASHRAE 62.1 rates)"
+      - step_2: "Size HVAC equipment accounting for OA loads (sensible + latent)"
+      - step_3: "Validate design using QA_ASHRAE_Ventilation_Compliance.yaml rules"
+      - step_4: "Generate QA report identifying any ventilation rate deficiencies"
+
+# Version History
+version_history:
+  - version: 1.0.0
+    date: 2025-01-22
+    author: Ventilation Specialist (Agent 3)
+    changes: Initial creation with 15 ASHRAE 62.1 ventilation compliance rules covering outdoor air rates, effectiveness, exhaust, DCV, and system calculations

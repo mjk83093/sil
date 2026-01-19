@@ -1,0 +1,181 @@
+# QA/QC Rule: Title Block Completeness
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: All disciplines
+# Reference: ISO 19650, CAD standards, project BIM execution plans
+
+rules:
+  - id: QA-001
+    description: Verify title block contains project name
+    severity: critical
+    category: title_block
+    rationale: Project identification is mandatory for document control and QA traceability
+    check:
+      type: field_presence
+      fields:
+        - title_block.project
+      condition: not null
+
+  - id: QA-002
+    description: Verify title block contains drawing scale
+    severity: critical
+    category: title_block
+    rationale: Scale is required for accurate interpretation of dimensions and spatial relationships
+    check:
+      type: field_presence
+      fields:
+        - title_block.scale
+      condition: not null
+
+  - id: QA-003
+    description: Verify title block contains revision number
+    severity: critical
+    category: title_block
+    rationale: Revision tracking is essential for change management and avoiding use of superseded drawings
+    check:
+      type: field_presence
+      fields:
+        - title_block.revision
+      condition: not null
+
+  - id: QA-004
+    description: Verify title block contains issue date
+    severity: critical
+    category: title_block
+    rationale: Date establishes document version timeline and contractual validity
+    check:
+      type: field_presence
+      fields:
+        - title_block.date
+      condition: not null
+
+  - id: QA-005
+    description: Verify title block contains sheet number
+    severity: critical
+    category: title_block
+    rationale: Sheet identification is required for drawing indexing and cross-referencing
+    check:
+      type: field_presence
+      fields:
+        - title_block.sheet_number
+      condition: not null
+
+  - id: QA-006
+    description: Verify title block contains sheet title/description
+    severity: high
+    category: title_block
+    rationale: Sheet title provides human-readable identification of drawing content
+    check:
+      type: field_presence
+      fields:
+        - title_block.sheet_title
+      condition: not null
+
+  - id: QA-007
+    description: Verify title block contains discipline designator
+    severity: high
+    category: title_block
+    rationale: Discipline identification aids in coordination between trades and navigation of drawing sets
+    check:
+      type: field_presence
+      fields:
+        - title_block.discipline
+      condition: not null
+
+  - id: QA-008
+    description: Verify title block contains project number
+    severity: high
+    category: title_block
+    rationale: Project number links drawing to billing, filing, and project management systems
+    check:
+      type: field_presence
+      fields:
+        - title_block.project_number
+      condition: not null
+
+  - id: QA-009
+    description: Verify title block contains drawn by initials
+    severity: medium
+    category: title_block
+    rationale: Designer identification supports accountability and technical questions
+    check:
+      type: field_presence
+      fields:
+        - title_block.drawn_by
+      condition: not null
+
+  - id: QA-010
+    description: Verify title block contains checked by initials
+    severity: medium
+    category: title_block
+    rationale: QC review identification demonstrates adherence to quality assurance process
+    check:
+      type: field_presence
+      fields:
+        - title_block.checked_by
+      condition: not null
+
+  - id: QA-011
+    description: Verify scale format is valid architectural/engineering notation
+    severity: medium
+    category: title_block
+    rationale: Standardized scale notation prevents misinterpretation
+    check:
+      type: field_format
+      field: title_block.scale
+      patterns:
+        - '^\\d+/\\d+"?=\\d+\'-\\d+"$'   # e.g., 1/4"=1'-0"
+        - '^\\d+:\\d+$'                   # e.g., 1:100
+        - '^NTS$'                         # Not To Scale
+        - '^AS NOTED$'                    # As Noted
+      description: "Scale must be in format: 1/4\"=1'-0\", 1:100, NTS, or AS NOTED"
+
+  - id: QA-012
+    description: Verify date format is valid ISO 8601 or US standard
+    severity: low
+    category: title_block
+    rationale: Consistent date format prevents ambiguity (especially month/day order)
+    check:
+      type: field_format
+      field: title_block.date
+      patterns:
+        - '^\\d{4}-\\d{2}-\\d{2}$'        # ISO 8601: YYYY-MM-DD
+        - '^\\d{2}/\\d{2}/\\d{4}$'        # US: MM/DD/YYYY
+        - '^\\d{2}-\\d{2}-\\d{4}$'        # Hyphenated: MM-DD-YYYY
+      description: "Date format must be YYYY-MM-DD, MM/DD/YYYY, or MM-DD-YYYY"
+
+  - id: QA-013
+    description: Verify project name is consistent across all sheets
+    severity: high
+    category: title_block
+    rationale: Inconsistent project names indicate potential for mixing drawings from different projects
+    check:
+      type: consistency
+      field: title_block.project
+      scope: all_sheets
+      condition: identical
+      description: "Project name must be identical across all sheets in the drawing set"
+
+  - id: QA-014
+    description: Verify project number is consistent across all sheets
+    severity: high
+    category: title_block
+    rationale: Mismatched project numbers can cause filing errors and contractual confusion
+    check:
+      type: consistency
+      field: title_block.project_number
+      scope: all_sheets
+      condition: identical
+      description: "Project number must be identical across all sheets"
+
+  - id: QA-015
+    description: Verify sheet numbers are unique within the drawing set
+    severity: critical
+    category: title_block
+    rationale: Duplicate sheet numbers cause ambiguity in cross-references and specifications
+    check:
+      type: uniqueness
+      field: title_block.sheet_number
+      scope: all_sheets
+      condition: unique
+      description: "Each sheet must have a unique sheet number"

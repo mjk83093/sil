@@ -1,0 +1,882 @@
+openapi: 3.0.3
+info:
+  title: Engineering Drawing QA/QC Validation Service
+  version: 2.0.0
+  description: |
+    RESTful API for automated QA/QC validation of engineering drawing data.
+    Supports electrical, mechanical, plumbing, and fire protection disciplines.
+
+    **Integration with engineering-drawing-qaqc skill:**
+    - POST /validate: Submit drawing JSON + rules YAML → Execute SKILL.md Step 3 validation
+    - GET /validate/{job_id}: Retrieve results → Corresponds to SKILL.md Step 4 aggregation
+    - POST /generate-report: Create PDF/CSV → Implements SKILL.md Step 5 reporting
+
+    **Key Features:**
+    - JSON Schema validation (JSON_Schema_ExtractedSheet_v2.json)
+    - Rule-based compliance checking
+    - Async validation for large drawing sets
+    - Multi-format report generation (CSV, PDF, JSON)
+
+  contact:
+    name: QA/QC API Support
+    email: api-support@engineering-qaqc.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://api.engineering-qaqc.com/v2
+    description: Production server
+  - url: https://staging-api.engineering-qaqc.com/v2
+    description: Staging server
+  - url: http://localhost:8080/v2
+    description: Local development server
+
+tags:
+  - name: Validation
+    description: QA/QC validation operations
+  - name: Rules
+    description: Validation rule management
+  - name: Reports
+    description: Report generation and retrieval
+  - name: Health
+    description: Service health and status
+
+paths:
+  /validate:
+    post:
+      tags:
+        - Validation
+      summary: Submit drawing data for QA/QC validation
+      description: |
+        Submit extracted drawing data (JSON format per JSON_Schema_ExtractedSheet_v2.json)
+        and validation rules (YAML format) for automated compliance checking.
+
+        **SKILL.md Integration:** This endpoint implements Step 3 (Execute QA Validation).
+
+        **Workflow:**
+        1. Validate JSON against schema
+        2. Parse QA rules from YAML
+        3. Execute validation engine (async for large sets)
+        4. Return job_id for result retrieval
+
+        **Supported Check Types:**
+        - field_presence: Required field validation
+        - field_format: Regex pattern validation
+        - symbol_legend_match: Symbol-legend consistency
+        - cross_reference: Sheet reference validation
+        - numeric_range: Value range checking
+        - consistency: Multi-sheet consistency
+        - enumeration: Allowed value checking
+        - custom: Discipline-specific logic
+
+      operationId: submitValidation
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - drawing_data
+              properties:
+                drawing_data:
+                  type: string
+                  format: binary
+                  description: JSON file containing extracted drawing data (per JSON_Schema_ExtractedSheet_v2.json)
+                rules:
+                  type: string
+                  format: binary
+                  description: |
+                    YAML file containing validation rules. If omitted, standard rules are applied.
+                    See /rules/standard for available rulesets.
+                async:
+                  type: boolean
+                  default: true
+                  description: |
+                    Process validation asynchronously.
+                    - true: Returns job_id immediately, poll /validate/{job_id} for results
+                    - false: Blocks until validation complete (max 60 seconds, then auto-converts to async)
+                project_id:
+                  type: string
+                  description: Optional project identifier for tracking
+                  pattern: '^[A-Z0-9-]{3,50}$'
+                  example: '2024-HQ-UPGRADE'
+            encoding:
+              drawing_data:
+                contentType: application/json
+              rules:
+                contentType: application/x-yaml, text/yaml
+      responses:
+        '202':
+          description: Validation submitted successfully (async mode)
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - job_id
+                  - status
+                  - submitted_at
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                    description: Unique job identifier for result retrieval
+                    example: '550e8400-e29b-41d4-a716-446655440000'
+                  status:
+                    type: string
+                    enum: [queued, processing]
+                    description: Current job status
+                  submitted_at:
+                    type: string
+                    format: date-time
+                    description: Job submission timestamp (ISO 8601)
+                  estimated_completion:
+                    type: string
+                    format: date-time
+                    description: Estimated completion time
+                  poll_url:
+                    type: string
+                    format: uri
+                    description: URL to poll for results
+                    example: 'https://api.engineering-qaqc.com/v2/validate/550e8400-e29b-41d4-a716-446655440000'
+              example:
+                job_id: '550e8400-e29b-41d4-a716-446655440000'
+                status: 'queued'
+                submitted_at: '2024-06-01T10:30:00Z'
+                estimated_completion: '2024-06-01T10:31:00Z'
+                poll_url: 'https://api.engineering-qaqc.com/v2/validate/550e8400-e29b-41d4-a716-446655440000'
+        '200':
+          description: Validation completed successfully (sync mode, small datasets only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        '400':
+          description: Invalid request (schema validation failed, malformed YAML, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                schema_error:
+                  summary: JSON schema validation failure
+                  value:
+                    error_code: 'SCHEMA_VALIDATION_FAILED'
+                    message: 'Drawing data does not conform to JSON_Schema_ExtractedSheet_v2.json'
+                    details:
+                      - field: 'sheets[0].title_block.revision'
+                        message: 'Does not match pattern ^[A-Z][0-9]{2,3}$'
+                        value: '123'
+                yaml_error:
+                  summary: YAML parsing failure
+                  value:
+                    error_code: 'YAML_PARSE_ERROR'
+                    message: 'Invalid YAML syntax in rules file'
+                    details:
+                      line: 15
+                      column: 8
+                      message: 'Unexpected character'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '413':
+          description: Payload too large (exceeds 50 MB limit)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /validate/{job_id}:
+    get:
+      tags:
+        - Validation
+      summary: Retrieve validation results
+      description: |
+        Poll validation job status and retrieve results when complete.
+
+        **SKILL.md Integration:** This endpoint provides Step 4 (Aggregate Results) output.
+
+        **Job Status Lifecycle:**
+        - queued → processing → completed | failed
+
+        **Polling Recommendations:**
+        - Initial poll after 5 seconds
+        - Exponential backoff: 5s, 10s, 20s, 30s intervals
+        - Max poll duration: 5 minutes (jobs >5min are likely failed)
+
+      operationId: getValidationResults
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          description: Job identifier from POST /validate response
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Validation results retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        '202':
+          description: Validation still in progress
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - job_id
+                  - status
+                  - progress
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [queued, processing]
+                  progress:
+                    type: object
+                    properties:
+                      sheets_processed:
+                        type: integer
+                        description: Number of sheets completed
+                      total_sheets:
+                        type: integer
+                        description: Total sheets to process
+                      percent_complete:
+                        type: integer
+                        minimum: 0
+                        maximum: 100
+                  estimated_completion:
+                    type: string
+                    format: date-time
+              example:
+                job_id: '550e8400-e29b-41d4-a716-446655440000'
+                status: 'processing'
+                progress:
+                  sheets_processed: 8
+                  total_sheets: 12
+                  percent_complete: 67
+                estimated_completion: '2024-06-01T10:31:30Z'
+        '404':
+          description: Job not found (invalid job_id or job expired)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '410':
+          description: Job results expired (results retained for 7 days)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /rules:
+    get:
+      tags:
+        - Rules
+      summary: List available validation rulesets
+      description: |
+        Retrieve list of standard validation rulesets available for use.
+        Custom rules can be provided in POST /validate request.
+
+        **SKILL.md Integration:** Supports Step 2 (Load or Define QA Rules) - Option B (Use Standard Rules).
+
+      operationId: listRules
+      parameters:
+        - name: discipline
+          in: query
+          description: Filter by engineering discipline
+          schema:
+            type: string
+            enum: [Electrical, Mechanical, Plumbing, Fire Protection, Architectural]
+        - name: version
+          in: query
+          description: Filter by rule version (defaults to latest)
+          schema:
+            type: string
+            pattern: '^v[0-9]+\\.[0-9]+$'
+            example: 'v2.0'
+      responses:
+        '200':
+          description: Rulesets retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  rulesets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Ruleset'
+              example:
+                rulesets:
+                  - id: 'electrical-standard-v2.0'
+                    name: 'Electrical Standard Rules v2.0'
+                    discipline: 'Electrical'
+                    version: 'v2.0'
+                    rule_count: 45
+                    description: 'Standard QA rules for electrical drawings (NEC 2023 compliance)'
+                    url: 'https://api.engineering-qaqc.com/v2/rules/electrical-standard-v2.0'
+                  - id: 'mechanical-standard-v2.0'
+                    name: 'Mechanical Standard Rules v2.0'
+                    discipline: 'Mechanical'
+                    version: 'v2.0'
+                    rule_count: 38
+                    description: 'Standard QA rules for HVAC drawings (ASHRAE compliance)'
+                    url: 'https://api.engineering-qaqc.com/v2/rules/mechanical-standard-v2.0'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /rules/{ruleset_id}:
+    get:
+      tags:
+        - Rules
+      summary: Download specific ruleset
+      description: |
+        Download YAML file for a specific standard ruleset.
+        Use this to inspect or customize standard rules.
+
+      operationId: getRuleset
+      parameters:
+        - name: ruleset_id
+          in: path
+          required: true
+          description: Ruleset identifier from GET /rules response
+          schema:
+            type: string
+            pattern: '^[a-z-]+v[0-9]+\\.[0-9]+$'
+            example: 'electrical-standard-v2.0'
+      responses:
+        '200':
+          description: Ruleset retrieved successfully
+          content:
+            application/x-yaml:
+              schema:
+                type: string
+                description: YAML ruleset file
+              example: |
+                ruleset:
+                  id: electrical-standard-v2.0
+                  name: Electrical Standard Rules v2.0
+                  discipline: Electrical
+                  version: v2.0
+                  rules:
+                    - id: QA-001
+                      description: Verify title block completeness
+                      severity: critical
+                      category: title_block
+                      check:
+                        type: field_presence
+                        fields:
+                          - title_block.project
+                          - title_block.scale
+                          - title_block.revision
+        '404':
+          description: Ruleset not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /generate-report:
+    post:
+      tags:
+        - Reports
+      summary: Generate validation compliance report
+      description: |
+        Generate formatted compliance report from validation results.
+
+        **SKILL.md Integration:** Implements Step 5 (Generate Report).
+
+        **Supported Formats:**
+        - CSV: Tabular format (sheet, rule, status, details)
+        - PDF: Executive summary + detailed findings
+        - JSON: Raw structured data for further processing
+
+      operationId: generateReport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - job_id
+                - format
+              properties:
+                job_id:
+                  type: string
+                  format: uuid
+                  description: Validation job identifier
+                format:
+                  type: string
+                  enum: [csv, pdf, json]
+                  description: Report output format
+                include_passed:
+                  type: boolean
+                  default: false
+                  description: Include passing rules in report (default: failures only)
+                severity_filter:
+                  type: array
+                  items:
+                    type: string
+                    enum: [critical, high, medium, low]
+                  description: Filter by severity levels (default: all levels)
+                  example: ['critical', 'high']
+      responses:
+        '200':
+          description: Report generated successfully
+          content:
+            text/csv:
+              schema:
+                type: string
+                description: CSV report file
+              example: |
+                Sheet,Rule ID,Severity,Category,Status,Description,Details
+                E-301,QA-001,critical,title_block,PASS,Verify title block completeness,All required fields present
+                E-301,QA-102,high,legend,FAIL,Confirm symbols match legend,"Symbol 'D4' not found in legend"
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+                description: PDF report file
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResult'
+        '400':
+          description: Invalid request (invalid job_id, unsupported format, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Validation job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Service health check
+      description: Check API service health and version
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [healthy, degraded]
+                  version:
+                    type: string
+                    example: '2.0.0'
+                  uptime_seconds:
+                    type: integer
+                    example: 3600
+                  queue_depth:
+                    type: integer
+                    description: Number of pending validation jobs
+              example:
+                status: 'healthy'
+                version: '2.0.0'
+                uptime_seconds: 3600
+                queue_depth: 3
+        '503':
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [unavailable]
+                  message:
+                    type: string
+                    example: 'Service temporarily unavailable due to maintenance'
+
+components:
+  schemas:
+    ValidationResult:
+      type: object
+      required:
+        - job_id
+        - status
+        - summary
+        - sheet_results
+      properties:
+        job_id:
+          type: string
+          format: uuid
+          description: Job identifier
+        status:
+          type: string
+          enum: [completed, failed]
+          description: Final job status
+        submitted_at:
+          type: string
+          format: date-time
+          description: Job submission timestamp
+        completed_at:
+          type: string
+          format: date-time
+          description: Job completion timestamp
+        processing_time_ms:
+          type: integer
+          description: Total processing time in milliseconds
+          example: 2347
+        project_id:
+          type: string
+          description: Project identifier (if provided in request)
+        summary:
+          type: object
+          required:
+            - total_sheets
+            - total_rules
+            - total_evaluations
+            - passed
+            - failed
+            - pass_rate
+          properties:
+            total_sheets:
+              type: integer
+              description: Number of sheets validated
+              example: 12
+            total_rules:
+              type: integer
+              description: Number of unique rules applied
+              example: 50
+            total_evaluations:
+              type: integer
+              description: Total rule evaluations (sheets × rules)
+              example: 600
+            passed:
+              type: integer
+              description: Number of passing evaluations
+              example: 582
+            failed:
+              type: integer
+              description: Number of failing evaluations
+              example: 18
+            pass_rate:
+              type: number
+              format: float
+              minimum: 0
+              maximum: 100
+              description: Pass rate percentage
+              example: 97.0
+            critical_failures:
+              type: integer
+              description: Count of critical severity failures
+              example: 0
+            high_failures:
+              type: integer
+              description: Count of high severity failures
+              example: 2
+            medium_failures:
+              type: integer
+              description: Count of medium severity failures
+              example: 10
+            low_failures:
+              type: integer
+              description: Count of low severity failures
+              example: 6
+        sheet_results:
+          type: array
+          description: Per-sheet validation results
+          items:
+            $ref: '#/components/schemas/SheetResult'
+        ruleset_info:
+          type: object
+          description: Information about applied ruleset
+          properties:
+            ruleset_id:
+              type: string
+              example: 'electrical-standard-v2.0'
+            custom_rules:
+              type: boolean
+              description: True if custom rules were provided
+              example: false
+
+    SheetResult:
+      type: object
+      required:
+        - sheet
+        - rules_evaluated
+        - passed
+        - failed
+        - failures
+      properties:
+        sheet:
+          type: string
+          description: Sheet identifier
+          pattern: '^[A-Z]{1,3}-[0-9]{3,4}[A-Z]?$'
+          example: 'E-301'
+        rules_evaluated:
+          type: integer
+          description: Number of rules evaluated for this sheet
+        passed:
+          type: integer
+          description: Number of passing rules
+        failed:
+          type: integer
+          description: Number of failing rules
+        failures:
+          type: array
+          description: Details of failed rules
+          items:
+            $ref: '#/components/schemas/RuleFailure'
+
+    RuleFailure:
+      type: object
+      required:
+        - rule_id
+        - description
+        - severity
+        - category
+        - details
+      properties:
+        rule_id:
+          type: string
+          description: Rule identifier
+          pattern: '^QA-[0-9]{3}(-[A-Z]+)?$'
+          example: 'QA-102'
+        description:
+          type: string
+          description: Human-readable rule description
+          example: 'Confirm symbols match legend'
+        severity:
+          type: string
+          enum: [critical, high, medium, low]
+          description: Failure severity
+        category:
+          type: string
+          description: Rule category
+          enum: [title_block, legend, cross_reference, schedule, compliance, consistency]
+        details:
+          type: string
+          description: Specific failure details
+          example: "Symbol 'D4' not found in legend"
+        field_path:
+          type: string
+          description: JSON path to failing field
+          example: 'symbols[3].tag'
+        expected:
+          type: string
+          description: Expected value or condition
+        actual:
+          type: string
+          description: Actual value found
+        remediation:
+          type: string
+          description: Suggested corrective action
+          example: 'Add D4 entry to legend or remove symbol from plan'
+
+    Ruleset:
+      type: object
+      required:
+        - id
+        - name
+        - discipline
+        - version
+        - rule_count
+      properties:
+        id:
+          type: string
+          description: Unique ruleset identifier
+          example: 'electrical-standard-v2.0'
+        name:
+          type: string
+          description: Human-readable ruleset name
+          example: 'Electrical Standard Rules v2.0'
+        discipline:
+          type: string
+          enum: [Electrical, Mechanical, Plumbing, Fire Protection, Architectural]
+        version:
+          type: string
+          pattern: '^v[0-9]+\\.[0-9]+$'
+          example: 'v2.0'
+        rule_count:
+          type: integer
+          description: Number of rules in ruleset
+          example: 45
+        description:
+          type: string
+          description: Ruleset description
+        url:
+          type: string
+          format: uri
+          description: URL to download ruleset YAML
+
+    Error:
+      type: object
+      required:
+        - error_code
+        - message
+      properties:
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: 'SCHEMA_VALIDATION_FAILED'
+        message:
+          type: string
+          description: Human-readable error message
+          example: 'Drawing data does not conform to JSON schema'
+        details:
+          type: object
+          description: Additional error details (structure varies by error type)
+          additionalProperties: true
+        request_id:
+          type: string
+          format: uuid
+          description: Request identifier for support inquiries
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        JWT bearer token authentication.
+
+        **Token Acquisition:**
+        POST /auth/token with username/password → Receive JWT token
+
+        **Token Expiration:** 1 hour
+        **Refresh:** POST /auth/refresh with expired token
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        API key authentication for service-to-service integration.
+
+        **Key Management:**
+        - Request API key from account dashboard
+        - Keys are project-scoped
+        - Rotate keys every 90 days
+
+  responses:
+    UnauthorizedError:
+      description: Authentication failed (missing, invalid, or expired token/API key)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            missing_auth:
+              summary: Missing authentication
+              value:
+                error_code: 'MISSING_AUTHENTICATION'
+                message: 'No authentication credentials provided'
+            invalid_token:
+              summary: Invalid JWT token
+              value:
+                error_code: 'INVALID_TOKEN'
+                message: 'JWT token is invalid or malformed'
+            expired_token:
+              summary: Expired JWT token
+              value:
+                error_code: 'EXPIRED_TOKEN'
+                message: 'JWT token has expired'
+                details:
+                  expired_at: '2024-06-01T09:30:00Z'
+
+    RateLimitError:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          description: Request limit per time window
+          schema:
+            type: integer
+            example: 100
+        X-RateLimit-Remaining:
+          description: Remaining requests in current window
+          schema:
+            type: integer
+            example: 0
+        X-RateLimit-Reset:
+          description: Time when rate limit resets (Unix timestamp)
+          schema:
+            type: integer
+            example: 1717243200
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error_code: 'RATE_LIMIT_EXCEEDED'
+            message: 'API rate limit exceeded. Limit: 100 requests/hour'
+            details:
+              reset_at: '2024-06-01T11:00:00Z'
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error_code: 'INTERNAL_SERVER_ERROR'
+            message: 'An unexpected error occurred. Please contact support with request_id'
+            request_id: '7f8b9c10-d11e-12f3-a456-426614174000'
+
+  parameters:
+    JobIdParam:
+      name: job_id
+      in: path
+      required: true
+      description: Validation job identifier
+      schema:
+        type: string
+        format: uuid
+
+security:
+  - BearerAuth: []
+  - ApiKeyAuth: []

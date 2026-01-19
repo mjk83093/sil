@@ -1,0 +1,919 @@
+# MEP Symbol Ontology
+# Hierarchical taxonomy of MEP symbols for engineering drawing QA/QC
+# Version: 1.0
+# Last Updated: 2025-10-22
+
+symbol_ontology:
+  version: "1.0"
+  description: "Comprehensive hierarchical classification of MEP symbols for automated tagging and validation"
+
+  electrical:
+    description: "Electrical power, lighting, fire alarm, and low voltage systems"
+
+    power_distribution:
+      description: "Power generation, transformation, and distribution equipment"
+
+      panels_and_boards:
+        class: "electrical.power.panels"
+        symbols:
+          - symbol_id: "PANEL_LP"
+            name: "Lighting Panel"
+            geometry: "rectangle with LP label"
+            attributes:
+              voltage: [120, 208, 240, 277, 480]
+              phases: [1, 3]
+              mounting: ["surface", "flush", "recessed"]
+              required_tags: ["panel_id", "voltage", "phases", "main_breaker"]
+            nec_reference: ["Article 408"]
+
+          - symbol_id: "PANEL_PP"
+            name: "Power Panel"
+            geometry: "rectangle with PP label"
+            attributes:
+              voltage: [208, 240, 480, 600]
+              phases: [1, 3]
+              mounting: ["surface", "flush", "recessed"]
+              required_tags: ["panel_id", "voltage", "phases", "main_breaker"]
+            nec_reference: ["Article 408"]
+
+          - symbol_id: "PANEL_EM"
+            name: "Emergency Panel"
+            geometry: "rectangle with EM label, red outline"
+            attributes:
+              voltage: [120, 208, 240, 277, 480]
+              phases: [1, 3]
+              source: ["generator", "battery", "ups"]
+              required_tags: ["panel_id", "voltage", "phases", "emergency_source"]
+            nec_reference: ["Article 700", "Article 701", "Article 702"]
+
+          - symbol_id: "MDP"
+            name: "Main Distribution Panel"
+            geometry: "large rectangle with MDP label"
+            attributes:
+              voltage: [208, 480, 600]
+              phases: [3]
+              bus_rating: [800, 1000, 1200, 1600, 2000, 2500, 3000, 4000]
+              required_tags: ["service_size", "voltage", "phases", "utility_connection"]
+            nec_reference: ["Article 230", "Article 408"]
+
+      switchgear_and_switches:
+        class: "electrical.power.switchgear"
+        symbols:
+          - symbol_id: "SWGR"
+            name: "Switchgear"
+            geometry: "large rectangle with SWGR label"
+            attributes:
+              voltage: [480, 600, 4160, 13800]
+              bus_rating: [1200, 1600, 2000, 2500, 3000, 4000]
+              interrupting_capacity: ["25kA", "42kA", "65kA", "100kA"]
+              required_tags: ["gear_id", "voltage", "bus_rating", "AIC"]
+            nec_reference: ["Article 408", "Article 490"]
+
+          - symbol_id: "XFER_SW"
+            name: "Automatic Transfer Switch"
+            geometry: "rectangle with ATS or transfer switch symbol"
+            attributes:
+              rating: [100, 200, 400, 600, 800, 1000, 1200, 1600, 2000]
+              poles: [2, 3, 4]
+              transition: ["open", "closed", "delayed"]
+              required_tags: ["ats_id", "rating", "normal_source", "emergency_source"]
+            nec_reference: ["Article 700.5", "Article 701.7"]
+
+          - symbol_id: "DISC_SW"
+            name: "Disconnect Switch"
+            geometry: "small rectangle or symbol with DS label"
+            attributes:
+              rating: [30, 60, 100, 200, 400, 600]
+              fused: [true, false]
+              enclosure: ["NEMA1", "NEMA3R", "NEMA4X"]
+              required_tags: ["switch_id", "rating", "load_served"]
+            nec_reference: ["Article 430.102", "Article 430.109"]
+
+      transformers:
+        class: "electrical.power.transformers"
+        symbols:
+          - symbol_id: "XFMR_DRY"
+            name: "Dry Type Transformer"
+            geometry: "circle with two coils or transformer symbol"
+            attributes:
+              kva: [15, 30, 45, 75, 112.5, 150, 225, 300, 500]
+              primary_voltage: [480, 600, 4160, 13800]
+              secondary_voltage: [120, 208, 240, 480]
+              phases: [1, 3]
+              required_tags: ["xfmr_id", "kva", "primary_v", "secondary_v"]
+            nec_reference: ["Article 450"]
+
+          - symbol_id: "XFMR_PAD"
+            name: "Pad-Mounted Transformer"
+            geometry: "rectangle with transformer symbol, outdoor"
+            attributes:
+              kva: [75, 112.5, 150, 225, 300, 500, 750, 1000, 1500, 2000]
+              primary_voltage: [4160, 12470, 13800]
+              secondary_voltage: [120, 208, 240, 480]
+              required_tags: ["xfmr_id", "kva", "primary_v", "secondary_v", "utility"]
+            nec_reference: ["Article 450"]
+
+      generators:
+        class: "electrical.power.generators"
+        symbols:
+          - symbol_id: "GEN"
+            name: "Emergency Generator"
+            geometry: "circle with G inside"
+            attributes:
+              kw: [20, 30, 60, 80, 100, 150, 200, 300, 500, 750, 1000, 2000]
+              voltage: [120, 208, 240, 480, 600]
+              phases: [1, 3]
+              fuel: ["diesel", "natural_gas", "propane", "dual_fuel"]
+              required_tags: ["gen_id", "kw", "voltage", "fuel_type", "ats_connection"]
+            nec_reference: ["Article 700", "Article 701", "Article 702", "Article 445"]
+
+    lighting:
+      description: "Lighting fixtures, switches, and controls"
+
+      fixtures:
+        class: "electrical.lighting.fixtures"
+        symbols:
+          - symbol_id: "LIGHT_RECESSED"
+            name: "Recessed Light Fixture"
+            geometry: "circle or square outline"
+            attributes:
+              type: ["downlight", "troffer", "wallwash"]
+              lamp: ["LED", "fluorescent", "incandescent", "halogen"]
+              voltage: [120, 277, 347]
+              mounting: ["recessed", "surface", "pendant", "wallmount"]
+              required_tags: ["fixture_type", "lamp_type", "voltage", "circuit"]
+            nec_reference: ["Article 410"]
+
+          - symbol_id: "LIGHT_EXIT"
+            name: "Exit Sign"
+            geometry: "rectangle with EXIT label"
+            attributes:
+              lamp: ["LED", "fluorescent", "incandescent"]
+              voltage: [120, 277]
+              emergency: [true, false]
+              required_tags: ["exit_id", "emergency_circuit", "battery_backup"]
+            nec_reference: ["Article 700", "IBC 1013"]
+
+          - symbol_id: "LIGHT_EMERGENCY"
+            name: "Emergency Light"
+            geometry: "circle or rectangle with EM label"
+            attributes:
+              lamp: ["LED", "fluorescent", "halogen"]
+              voltage: [120, 277]
+              battery_minutes: [90, 180]
+              required_tags: ["em_id", "emergency_circuit", "battery_duration"]
+            nec_reference: ["Article 700", "IBC 1008"]
+
+      switches_and_controls:
+        class: "electrical.lighting.controls"
+        symbols:
+          - symbol_id: "SW_SINGLE"
+            name: "Single Pole Switch"
+            geometry: "S or $ symbol"
+            attributes:
+              poles: [1]
+              voltage: [120, 277]
+              mounting_height: [48]
+              required_tags: ["switch_id", "load_controlled"]
+            nec_reference: ["Article 404"]
+
+          - symbol_id: "SW_3WAY"
+            name: "3-Way Switch"
+            geometry: "S3 or $3 symbol"
+            attributes:
+              poles: [1]
+              voltage: [120, 277]
+              traveler_required: [true]
+              required_tags: ["switch_id", "paired_switch", "load_controlled"]
+            nec_reference: ["Article 404"]
+
+          - symbol_id: "SW_DIMMER"
+            name: "Dimmer Switch"
+            geometry: "D or dimmer symbol"
+            attributes:
+              voltage: [120, 277]
+              dimming_protocol: ["0-10V", "DALI", "DMX", "phase_cut"]
+              required_tags: ["dimmer_id", "load_controlled", "protocol"]
+            nec_reference: ["Article 404"]
+
+          - symbol_id: "SENSOR_OCC"
+            name: "Occupancy Sensor"
+            geometry: "OS or sensor symbol"
+            attributes:
+              technology: ["PIR", "ultrasonic", "dual"]
+              mounting: ["ceiling", "wall", "corner"]
+              coverage_sqft: [300, 600, 900, 1200, 2000]
+              required_tags: ["sensor_id", "zones_controlled", "technology"]
+            nec_reference: ["Article 404", "ASHRAE 90.1"]
+
+          - symbol_id: "SENSOR_LIGHT"
+            name: "Photocell/Light Sensor"
+            geometry: "PS or photocell symbol"
+            attributes:
+              mounting: ["ceiling", "wall", "exterior"]
+              control: ["daylight_harvesting", "exterior_lighting"]
+              required_tags: ["sensor_id", "zones_controlled"]
+            nec_reference: ["Article 404", "ASHRAE 90.1"]
+
+      receptacles:
+        class: "electrical.power.receptacles"
+        symbols:
+          - symbol_id: "RCPT_DUPLEX"
+            name: "Duplex Receptacle"
+            geometry: "circle with parallel lines"
+            attributes:
+              voltage: [120, 208, 240]
+              amperage: [15, 20]
+              grounding: ["grounded", "isolated_ground"]
+              mounting_height: [18, 48]
+              required_tags: ["receptacle_type", "voltage", "circuit"]
+            nec_reference: ["Article 406"]
+
+          - symbol_id: "RCPT_GFI"
+            name: "GFCI Receptacle"
+            geometry: "circle with GFI label"
+            attributes:
+              voltage: [120, 240]
+              amperage: [15, 20]
+              location: ["wet", "damp", "outdoor", "kitchen", "bathroom"]
+              required_tags: ["gfci_id", "voltage", "circuit", "location"]
+            nec_reference: ["Article 210.8", "Article 406"]
+
+          - symbol_id: "RCPT_WP"
+            name: "Weatherproof Receptacle"
+            geometry: "circle with WP label"
+            attributes:
+              voltage: [120, 240]
+              amperage: [15, 20]
+              enclosure: ["NEMA3R", "NEMA4X"]
+              cover: ["while_in_use", "standard"]
+              required_tags: ["wp_id", "voltage", "circuit", "enclosure_rating"]
+            nec_reference: ["Article 406.9"]
+
+    fire_alarm:
+      description: "Fire alarm detection, notification, and control systems"
+
+      panels:
+        class: "electrical.fire_alarm.panels"
+        symbols:
+          - symbol_id: "FACP"
+            name: "Fire Alarm Control Panel"
+            geometry: "rectangle with FACP label"
+            attributes:
+              zones: [4, 8, 16, 32, 64, 128]
+              addressable: [true, false]
+              voltage: [120, 240]
+              required_tags: ["facp_id", "zones", "addressable", "monitored_by"]
+            nfpa_reference: ["NFPA 72"]
+
+          - symbol_id: "ANNUNCIATOR"
+            name: "Remote Annunciator"
+            geometry: "rectangle with ANN label"
+            attributes:
+              type: ["graphical", "text", "LED"]
+              zones_displayed: [4, 8, 16, 32]
+              required_tags: ["ann_id", "facp_connection"]
+            nfpa_reference: ["NFPA 72"]
+
+      devices:
+        class: "electrical.fire_alarm.devices"
+        symbols:
+          - symbol_id: "SMOKE_DET"
+            name: "Smoke Detector"
+            geometry: "circle with S or smoke symbol"
+            attributes:
+              type: ["ionization", "photoelectric", "dual", "aspirating"]
+              mounting: ["ceiling", "wall", "duct"]
+              addressable: [true, false]
+              required_tags: ["device_id", "zone", "addressable"]
+            nfpa_reference: ["NFPA 72"]
+
+          - symbol_id: "HEAT_DET"
+            name: "Heat Detector"
+            geometry: "circle with H or heat symbol"
+            attributes:
+              type: ["fixed_temperature", "rate_of_rise"]
+              temperature: [135, 165, 200]
+              addressable: [true, false]
+              required_tags: ["device_id", "zone", "temp_rating"]
+            nfpa_reference: ["NFPA 72"]
+
+          - symbol_id: "PULL_STATION"
+            name: "Manual Pull Station"
+            geometry: "square with pull station symbol"
+            attributes:
+              type: ["single_action", "dual_action"]
+              mounting_height: [48]
+              addressable: [true, false]
+              required_tags: ["station_id", "zone", "egress_location"]
+            nfpa_reference: ["NFPA 72"]
+
+          - symbol_id: "HORN_STROBE"
+            name: "Horn/Strobe"
+            geometry: "bell or horn with strobe lines"
+            attributes:
+              type: ["horn_only", "strobe_only", "combination"]
+              candela: [15, 30, 75, 110, 177]
+              voltage: [24]
+              mounting: ["wall", "ceiling"]
+              required_tags: ["device_id", "candela", "circuit"]
+            nfpa_reference: ["NFPA 72"]
+
+    low_voltage:
+      description: "Data, telecommunications, AV, and security systems"
+
+      data_telecom:
+        class: "electrical.low_voltage.data"
+        symbols:
+          - symbol_id: "DATA_OUTLET"
+            name: "Data Outlet"
+            geometry: "circle with D or data symbol"
+            attributes:
+              category: ["Cat5e", "Cat6", "Cat6A", "fiber"]
+              ports: [1, 2, 4]
+              mounting_height: [18]
+              required_tags: ["outlet_id", "category", "homerun_location"]
+            standards: ["TIA-568", "TIA-569"]
+
+          - symbol_id: "TEL_OUTLET"
+            name: "Telephone Outlet"
+            geometry: "circle with T or phone symbol"
+            attributes:
+              type: ["analog", "digital", "VoIP"]
+              lines: [1, 2, 4]
+              mounting_height: [18]
+              required_tags: ["outlet_id", "lines", "homerun_location"]
+            standards: ["TIA-568"]
+
+          - symbol_id: "IDF_RACK"
+            name: "Intermediate Distribution Frame"
+            geometry: "rectangle with IDF label"
+            attributes:
+              rack_units: [12, 24, 42, 48]
+              equipment: ["switches", "patch_panels", "UPS"]
+              required_tags: ["idf_id", "mdf_connection", "equipment_list"]
+            standards: ["TIA-568", "TIA-569", "TIA-606"]
+
+      audio_visual:
+        class: "electrical.low_voltage.av"
+        symbols:
+          - symbol_id: "AV_OUTLET"
+            name: "AV Connection Point"
+            geometry: "circle with AV label"
+            attributes:
+              type: ["HDMI", "DisplayPort", "VGA", "audio"]
+              mounting: ["wall", "floor", "table"]
+              required_tags: ["av_id", "connection_type", "equipment_served"]
+
+          - symbol_id: "SPEAKER"
+            name: "Speaker"
+            geometry: "speaker cone symbol"
+            attributes:
+              type: ["ceiling", "wall", "pendant"]
+              wattage: [5, 10, 20, 40, 70, 100]
+              voltage: [25, 70.7]
+              required_tags: ["speaker_id", "wattage", "zone"]
+
+      security:
+        class: "electrical.low_voltage.security"
+        symbols:
+          - symbol_id: "CAMERA"
+            name: "Security Camera"
+            geometry: "camera symbol"
+            attributes:
+              type: ["dome", "bullet", "PTZ"]
+              mounting: ["ceiling", "wall", "pole"]
+              power: ["PoE", "24VAC", "12VDC"]
+              required_tags: ["camera_id", "coverage_area", "nvr_connection"]
+
+          - symbol_id: "CARD_READER"
+            name: "Card Reader"
+            geometry: "rectangle with CR label"
+            attributes:
+              technology: ["proximity", "smart_card", "biometric"]
+              mounting_height: [48]
+              required_tags: ["reader_id", "door_controlled", "controller_connection"]
+
+  mechanical:
+    description: "HVAC equipment, distribution, and controls"
+
+    equipment:
+      description: "Heating, cooling, and ventilation equipment"
+
+      air_handling:
+        class: "mechanical.equipment.air_handling"
+        symbols:
+          - symbol_id: "AHU"
+            name: "Air Handling Unit"
+            geometry: "large rectangle with AHU label"
+            attributes:
+              cfm: [1000, 2000, 5000, 10000, 20000, 50000]
+              supply_type: ["constant_volume", "variable_volume"]
+              heating: ["hot_water", "electric", "gas", "steam"]
+              cooling: ["chilled_water", "DX"]
+              required_tags: ["ahu_id", "cfm", "zones_served", "heating_type", "cooling_type"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+          - symbol_id: "RTU"
+            name: "Rooftop Unit"
+            geometry: "rectangle with RTU label"
+            attributes:
+              tons: [3, 5, 7.5, 10, 12.5, 15, 20, 25, 30, 40, 50]
+              cfm: [1200, 2000, 4000, 8000, 12000, 20000]
+              efficiency: ["standard", "high_efficiency"]
+              required_tags: ["rtu_id", "tons", "cfm", "zones_served"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+          - symbol_id: "ERV_HRV"
+            name: "Energy/Heat Recovery Ventilator"
+            geometry: "rectangle with ERV or HRV label"
+            attributes:
+              cfm: [100, 200, 500, 1000, 2000]
+              effectiveness: [0.6, 0.7, 0.8]
+              type: ["ERV", "HRV"]
+              required_tags: ["unit_id", "cfm", "effectiveness", "outdoor_air"]
+            codes: ["IMC", "ASHRAE 62.1", "ASHRAE 90.1"]
+
+          - symbol_id: "EXHAUST_FAN"
+            name: "Exhaust Fan"
+            geometry: "circle with fan blades and EF label"
+            attributes:
+              cfm: [50, 100, 200, 500, 1000, 2000, 5000]
+              type: ["roof", "inline", "wall", "ceiling"]
+              application: ["general", "toilet", "kitchen", "lab"]
+              required_tags: ["fan_id", "cfm", "space_served"]
+            codes: ["IMC", "ASHRAE 62.1"]
+
+      central_plant:
+        class: "mechanical.equipment.central_plant"
+        symbols:
+          - symbol_id: "CHILLER"
+            name: "Chiller"
+            geometry: "large rectangle with CHL label"
+            attributes:
+              tons: [100, 200, 300, 500, 750, 1000, 1500, 2000]
+              type: ["air_cooled", "water_cooled"]
+              refrigerant: ["R-134a", "R-410A", "R-513A"]
+              required_tags: ["chiller_id", "tons", "type", "efficiency"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+          - symbol_id: "BOILER"
+            name: "Boiler"
+            geometry: "large rectangle with BLR label"
+            attributes:
+              mbh: [500, 1000, 2000, 5000, 10000]
+              fuel: ["natural_gas", "oil", "electric"]
+              type: ["hot_water", "steam"]
+              required_tags: ["boiler_id", "mbh", "fuel", "efficiency"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+          - symbol_id: "COOLING_TOWER"
+            name: "Cooling Tower"
+            geometry: "rectangle with CT label"
+            attributes:
+              tons: [100, 200, 500, 1000, 2000]
+              type: ["induced_draft", "forced_draft"]
+              required_tags: ["ct_id", "tons", "chiller_served"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+          - symbol_id: "PUMP"
+            name: "Pump"
+            geometry: "circle with P label"
+            attributes:
+              gpm: [10, 20, 50, 100, 200, 500, 1000]
+              head_ft: [20, 40, 60, 100, 150]
+              hp: [0.5, 1, 2, 3, 5, 7.5, 10, 15, 20, 30, 50]
+              application: ["chilled_water", "hot_water", "condenser_water"]
+              required_tags: ["pump_id", "gpm", "hp", "system"]
+            codes: ["IMC", "ASHRAE 90.1"]
+
+    distribution:
+      description: "Ductwork, diffusers, and air distribution"
+
+      ductwork:
+        class: "mechanical.distribution.ducts"
+        symbols:
+          - symbol_id: "DUCT_SUPPLY"
+            name: "Supply Air Duct"
+            geometry: "single line or double line"
+            attributes:
+              size_range: ["4x4", "6x6", "12x12", "24x24", "48x48"]
+              pressure: ["low", "medium", "high"]
+              insulation: ["internal", "external", "none"]
+              required_tags: ["size", "pressure_class", "ahu_source"]
+            codes: ["IMC", "SMACNA"]
+
+          - symbol_id: "DUCT_RETURN"
+            name: "Return Air Duct"
+            geometry: "single line with R notation"
+            attributes:
+              size_range: ["8x8", "12x12", "24x24", "48x60"]
+              pressure: ["low"]
+              required_tags: ["size", "ahu_return"]
+            codes: ["IMC", "SMACNA"]
+
+          - symbol_id: "DUCT_EXHAUST"
+            name: "Exhaust Air Duct"
+            geometry: "single line with EX notation"
+            attributes:
+              size_range: ["4x4", "6x6", "12x12", "24x24"]
+              application: ["general", "kitchen", "lab", "toilet"]
+              required_tags: ["size", "exhaust_fan"]
+            codes: ["IMC"]
+
+      terminals:
+        class: "mechanical.distribution.terminals"
+        symbols:
+          - symbol_id: "DIFFUSER_SUPPLY"
+            name: "Supply Air Diffuser"
+            geometry: "square with X or diffuser pattern"
+            attributes:
+              type: ["round", "square", "linear", "slot"]
+              size: ["6", "8", "10", "12", "18", "24"]
+              cfm: [50, 100, 200, 300, 500]
+              required_tags: ["diffuser_id", "size", "cfm", "ahu_served"]
+            codes: ["IMC", "ASHRAE 62.1"]
+
+          - symbol_id: "GRILLE_RETURN"
+            name: "Return Air Grille"
+            geometry: "square with horizontal lines"
+            attributes:
+              size: ["12x12", "18x18", "24x24", "24x36"]
+              cfm: [100, 200, 500, 1000]
+              required_tags: ["grille_id", "size", "cfm", "ahu_return"]
+            codes: ["IMC"]
+
+          - symbol_id: "REGISTER"
+            name: "Register"
+            geometry: "rectangle with angled lines"
+            attributes:
+              size: ["8x4", "10x6", "12x6", "14x6"]
+              cfm: [50, 100, 150, 200]
+              damper: ["opposed_blade", "single_blade"]
+              required_tags: ["register_id", "size", "cfm"]
+            codes: ["IMC"]
+
+    controls:
+      description: "HVAC control devices and building automation"
+
+      sensors:
+        class: "mechanical.controls.sensors"
+        symbols:
+          - symbol_id: "TEMP_SENSOR"
+            name: "Temperature Sensor"
+            geometry: "circle with T or thermometer"
+            attributes:
+              type: ["space", "duct", "outdoor", "pipe"]
+              range: ["-40 to 140F", "32 to 120F"]
+              output: ["analog", "digital"]
+              required_tags: ["sensor_id", "location", "controller"]
+            standards: ["ASHRAE 90.1"]
+
+          - symbol_id: "HUMIDITY_SENSOR"
+            name: "Humidity Sensor"
+            geometry: "circle with H or droplet"
+            attributes:
+              type: ["space", "duct", "outdoor"]
+              range: ["0-100%RH"]
+              required_tags: ["sensor_id", "location", "controller"]
+
+          - symbol_id: "PRESSURE_SENSOR"
+            name: "Pressure Sensor"
+            geometry: "circle with P"
+            attributes:
+              type: ["static", "differential"]
+              range: ["0-1 in.wc", "0-5 in.wc"]
+              required_tags: ["sensor_id", "measurement_point"]
+
+      actuators:
+        class: "mechanical.controls.actuators"
+        symbols:
+          - symbol_id: "DAMPER"
+            name: "Control Damper"
+            geometry: "line with damper blade symbol"
+            attributes:
+              type: ["motorized", "manual", "fire", "smoke"]
+              control: ["2-position", "modulating"]
+              actuator: ["electric", "pneumatic"]
+              required_tags: ["damper_id", "type", "controller"]
+            codes: ["IMC", "IBC"]
+
+          - symbol_id: "VALVE_CONTROL"
+            name: "Control Valve"
+            geometry: "valve body with actuator symbol"
+            attributes:
+              type: ["2-way", "3-way"]
+              control: ["2-position", "modulating"]
+              size: ["0.5", "0.75", "1", "1.25", "1.5", "2", "2.5", "3", "4", "6"]
+              required_tags: ["valve_id", "type", "pipe_system"]
+
+  plumbing:
+    description: "Plumbing fixtures, equipment, and piping systems"
+
+    fixtures:
+      description: "Plumbing fixtures and accessories"
+
+      sanitary:
+        class: "plumbing.fixtures.sanitary"
+        symbols:
+          - symbol_id: "WATER_CLOSET"
+            name: "Water Closet (Toilet)"
+            geometry: "oval or toilet top view"
+            attributes:
+              type: ["floor_mount", "wall_mount"]
+              flush: ["tank", "flushometer"]
+              gpf: [1.0, 1.28, 1.6]
+              ada: [true, false]
+              required_tags: ["fixture_id", "gpf", "ada_compliant"]
+            codes: ["IPC", "UPC", "ADA"]
+
+          - symbol_id: "LAVATORY"
+            name: "Lavatory (Sink)"
+            geometry: "rectangle or oval"
+            attributes:
+              type: ["wall_mount", "countertop", "pedestal"]
+              faucet: ["manual", "automatic"]
+              gpm: [0.5, 1.5, 2.2]
+              ada: [true, false]
+              required_tags: ["fixture_id", "gpm", "mounting"]
+            codes: ["IPC", "UPC", "ADA"]
+
+          - symbol_id: "URINAL"
+            name: "Urinal"
+            geometry: "urinal front view symbol"
+            attributes:
+              type: ["wall_mount", "stall"]
+              flush: ["manual", "automatic", "waterless"]
+              gpf: [0.125, 0.5, 1.0]
+              required_tags: ["fixture_id", "gpf", "flush_type"]
+            codes: ["IPC", "UPC"]
+
+          - symbol_id: "SHOWER"
+            name: "Shower"
+            geometry: "square with shower head"
+            attributes:
+              type: ["standard", "accessible"]
+              gpm: [2.0, 2.5]
+              valve: ["pressure_balance", "thermostatic"]
+              required_tags: ["fixture_id", "gpm", "valve_type"]
+            codes: ["IPC", "UPC", "ADA"]
+
+      equipment:
+        class: "plumbing.equipment"
+        symbols:
+          - symbol_id: "WATER_HEATER"
+            name: "Water Heater"
+            geometry: "rectangle with WH label"
+            attributes:
+              type: ["tank", "tankless"]
+              fuel: ["electric", "gas"]
+              capacity_gal: [30, 40, 50, 80, 100]
+              recovery_gph: [40, 60, 80, 100]
+              required_tags: ["wh_id", "capacity", "fuel", "efficiency"]
+            codes: ["IPC", "UPC", "IMC"]
+
+          - symbol_id: "PUMP_DOMESTIC"
+            name: "Domestic Water Pump"
+            geometry: "circle with P label"
+            attributes:
+              type: ["booster", "circulating", "sump", "sewage"]
+              gpm: [5, 10, 20, 50, 100]
+              hp: [0.5, 1, 2, 3, 5]
+              required_tags: ["pump_id", "gpm", "hp", "application"]
+            codes: ["IPC", "UPC"]
+
+    piping:
+      description: "Piping systems and connections"
+
+      domestic_water:
+        class: "plumbing.piping.water"
+        symbols:
+          - symbol_id: "PIPE_CW"
+            name: "Cold Water Pipe"
+            geometry: "single line with CW label"
+            attributes:
+              size: ["0.5", "0.75", "1", "1.25", "1.5", "2", "2.5", "3", "4", "6"]
+              material: ["copper", "PEX", "CPVC", "steel"]
+              required_tags: ["size", "material", "pressure_rating"]
+            codes: ["IPC", "UPC"]
+
+          - symbol_id: "PIPE_HW"
+            name: "Hot Water Pipe"
+            geometry: "line with HW label and heat marks"
+            attributes:
+              size: ["0.5", "0.75", "1", "1.25", "1.5", "2"]
+              material: ["copper", "PEX", "CPVC"]
+              insulation: ["required", "optional"]
+              required_tags: ["size", "material", "temperature"]
+            codes: ["IPC", "UPC"]
+
+          - symbol_id: "PIPE_HWR"
+            name: "Hot Water Return Pipe"
+            geometry: "line with HWR label"
+            attributes:
+              size: ["0.5", "0.75", "1", "1.25"]
+              material: ["copper", "PEX", "CPVC"]
+              required_tags: ["size", "circulation_pump"]
+            codes: ["IPC", "UPC"]
+
+      drainage:
+        class: "plumbing.piping.drainage"
+        symbols:
+          - symbol_id: "PIPE_SANITARY"
+            name: "Sanitary Drain Pipe"
+            geometry: "line with S label"
+            attributes:
+              size: ["1.5", "2", "3", "4", "6", "8", "10", "12"]
+              material: ["PVC", "cast_iron", "ABS"]
+              slope: ["0.25_in_per_ft", "0.125_in_per_ft"]
+              required_tags: ["size", "material", "slope", "fixture_units"]
+            codes: ["IPC", "UPC"]
+
+          - symbol_id: "PIPE_VENT"
+            name: "Vent Pipe"
+            geometry: "line with V label"
+            attributes:
+              size: ["1.5", "2", "3", "4", "6"]
+              material: ["PVC", "cast_iron", "ABS"]
+              required_tags: ["size", "fixtures_served"]
+            codes: ["IPC", "UPC"]
+
+      valves:
+        class: "plumbing.piping.valves"
+        symbols:
+          - symbol_id: "VALVE_GATE"
+            name: "Gate Valve"
+            geometry: "line with gate valve symbol"
+            attributes:
+              size: ["0.5", "0.75", "1", "1.25", "1.5", "2", "2.5", "3", "4", "6"]
+              material: ["brass", "bronze", "iron"]
+              required_tags: ["size", "pipe_system"]
+
+          - symbol_id: "VALVE_BALL"
+            name: "Ball Valve"
+            geometry: "line with ball valve symbol"
+            attributes:
+              size: ["0.5", "0.75", "1", "1.25", "1.5", "2", "3", "4"]
+              port: ["full_port", "standard_port"]
+              required_tags: ["size", "pipe_system"]
+
+  fire_protection:
+    description: "Fire sprinkler and standpipe systems"
+
+    sprinkler:
+      description: "Automatic fire sprinkler systems"
+
+      heads:
+        class: "fire_protection.sprinkler.heads"
+        symbols:
+          - symbol_id: "SPRINKLER_PEND"
+            name: "Pendent Sprinkler Head"
+            geometry: "circle with downward triangle"
+            attributes:
+              temperature: [135, 155, 175, 200, 286]
+              k_factor: [5.6, 8.0, 11.2, 14.0, 16.8, 25.2]
+              coverage: ["standard", "extended"]
+              required_tags: ["head_id", "temperature", "k_factor", "coverage_sqft"]
+            nfpa_reference: ["NFPA 13"]
+
+          - symbol_id: "SPRINKLER_UPRIGHT"
+            name: "Upright Sprinkler Head"
+            geometry: "circle with upward triangle"
+            attributes:
+              temperature: [135, 155, 175, 200]
+              k_factor: [5.6, 8.0, 11.2]
+              required_tags: ["head_id", "temperature", "k_factor"]
+            nfpa_reference: ["NFPA 13"]
+
+          - symbol_id: "SPRINKLER_SIDEWALL"
+            name: "Sidewall Sprinkler Head"
+            geometry: "circle with side arrow"
+            attributes:
+              temperature: [135, 155, 175]
+              k_factor: [5.6, 8.0]
+              coverage: ["standard", "extended"]
+              required_tags: ["head_id", "temperature", "coverage"]
+            nfpa_reference: ["NFPA 13"]
+
+      equipment:
+        class: "fire_protection.sprinkler.equipment"
+        symbols:
+          - symbol_id: "RISER"
+            name: "Fire Sprinkler Riser"
+            geometry: "large rectangle with RISER label"
+            attributes:
+              size: ["4", "6", "8"]
+              type: ["wet", "dry", "preaction", "deluge"]
+              valves: ["OS&Y", "PIV", "alarm"]
+              required_tags: ["riser_id", "type", "size", "fdc_connection"]
+            nfpa_reference: ["NFPA 13", "NFPA 14"]
+
+          - symbol_id: "FDC"
+            name: "Fire Department Connection"
+            geometry: "siamese connection symbol"
+            attributes:
+              size: ["4", "6"]
+              inlets: [2, 3]
+              system: ["sprinkler", "standpipe", "combination"]
+              required_tags: ["fdc_id", "riser_served", "system_type"]
+            nfpa_reference: ["NFPA 13", "NFPA 14"]
+
+    standpipe:
+      description: "Standpipe and hose systems"
+
+      outlets:
+        class: "fire_protection.standpipe.outlets"
+        symbols:
+          - symbol_id: "HOSE_VALVE"
+            name: "Standpipe Hose Valve"
+            geometry: "valve with hose connection"
+            attributes:
+              size: ["1.5", "2.5"]
+              class: ["I", "II", "III"]
+              pressure: ["standard", "pressure_reducing"]
+              required_tags: ["valve_id", "class", "riser_served"]
+            nfpa_reference: ["NFPA 14"]
+
+          - symbol_id: "HOSE_CABINET"
+            name: "Fire Hose Cabinet"
+            geometry: "rectangle with hose reel"
+            attributes:
+              size: ["1.5", "2.5"]
+              contents: ["hose", "extinguisher", "combination"]
+              mounting: ["recessed", "surface"]
+              required_tags: ["cabinet_id", "contents", "valve_connection"]
+            nfpa_reference: ["NFPA 14"]
+
+relationships:
+  depends_on:
+    - from: "electrical.lighting.fixtures"
+      to: "electrical.power.panels"
+      description: "Lighting fixtures must be connected to lighting panels"
+
+    - from: "electrical.lighting.controls"
+      to: "electrical.lighting.fixtures"
+      description: "Lighting controls must control specific fixtures"
+
+    - from: "electrical.power.receptacles"
+      to: "electrical.power.panels"
+      description: "Receptacles must be connected to power panels"
+
+    - from: "electrical.fire_alarm.devices"
+      to: "electrical.fire_alarm.panels"
+      description: "Fire alarm devices must be connected to FACP"
+
+    - from: "mechanical.distribution.terminals"
+      to: "mechanical.equipment.air_handling"
+      description: "Diffusers/grilles must be served by AHU or RTU"
+
+    - from: "mechanical.controls.actuators"
+      to: "mechanical.controls.sensors"
+      description: "Actuators controlled by sensor inputs"
+
+    - from: "plumbing.fixtures.sanitary"
+      to: "plumbing.piping.water"
+      description: "Fixtures require cold/hot water supply"
+
+    - from: "plumbing.fixtures.sanitary"
+      to: "plumbing.piping.drainage"
+      description: "Fixtures require sanitary drain connection"
+
+    - from: "fire_protection.sprinkler.heads"
+      to: "fire_protection.sprinkler.equipment"
+      description: "Sprinkler heads must be fed by riser system"
+
+validation_rules:
+  symbol_placement:
+    - rule: "panels_on_walls"
+      applies_to: ["electrical.power.panels"]
+      description: "Electrical panels must be placed on walls, not in open space"
+
+    - rule: "receptacle_spacing"
+      applies_to: ["electrical.power.receptacles"]
+      description: "Wall receptacles must be spaced per NEC 210.52"
+      max_spacing_ft: 12
+
+    - rule: "exit_sign_egress"
+      applies_to: ["electrical.lighting.fixtures.LIGHT_EXIT"]
+      description: "Exit signs required at egress doors per IBC 1013"
+
+    - rule: "gfci_locations"
+      applies_to: ["electrical.power.receptacles.RCPT_GFI"]
+      description: "GFCI protection required in specific locations per NEC 210.8"
+      required_locations: ["bathroom", "kitchen", "outdoor", "garage", "unfinished_basement"]
+
+    - rule: "smoke_detector_spacing"
+      applies_to: ["electrical.fire_alarm.devices.SMOKE_DET"]
+      description: "Smoke detectors spaced per NFPA 72"
+      max_spacing_ft: 30
+
+    - rule: "diffuser_coverage"
+      applies_to: ["mechanical.distribution.terminals"]
+      description: "Supply diffusers must provide adequate air distribution"
+      max_coverage_sqft: 150
+
+    - rule: "sprinkler_coverage"
+      applies_to: ["fire_protection.sprinkler.heads"]
+      description: "Sprinkler heads spaced per NFPA 13"
+      max_spacing_ft: [12, 15]
+      max_coverage_sqft: [130, 225]

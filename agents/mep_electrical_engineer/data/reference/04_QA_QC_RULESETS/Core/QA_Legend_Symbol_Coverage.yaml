@@ -1,0 +1,283 @@
+# QA/QC Rule: Legend and Symbol Coverage Validation
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: All disciplines
+# Reference: CAD standards, ISO 19650, discipline-specific symbol libraries
+
+rules:
+  - id: QA-101-CORE
+    description: Verify all symbols on drawing appear in legend
+    severity: critical
+    category: legend
+    rationale: Unlisted symbols cannot be interpreted by contractors, leading to RFIs and field errors
+    check:
+      type: symbol_legend_match
+      symbols_field: symbols[*].symbol_tag
+      legend_field: legend[*].symbol_tag
+      condition: all(symbol_tags ⊆ legend_tags)
+      params:
+        strict: true
+        exclude_standard_symbols: ["wall", "door", "window"]  # Common architectural symbols
+      description: "All symbol tags on the drawing must have corresponding legend entries"
+
+  - id: QA-102-CORE
+    description: Verify no orphaned legend entries (legend items with no corresponding symbols)
+    severity: medium
+    category: legend
+    rationale: Unused legend entries clutter the drawing and may indicate missing equipment or outdated legends
+    check:
+      type: symbol_legend_match
+      symbols_field: symbols[*].symbol_tag
+      legend_field: legend[*].symbol_tag
+      condition: all(legend_tags ⊆ symbol_tags ∪ allowed_unused)
+      params:
+        allow_unused_percent: 10  # Allow up to 10% unused for future/spare designations
+        allow_unused_tags: ["SPARE", "FUTURE", "ALT"]
+      description: "Legend entries should correspond to symbols actually placed on the drawing"
+
+  - id: QA-103-CORE
+    description: Verify legend symbol descriptions are not empty
+    severity: high
+    category: legend
+    rationale: Symbol descriptions are essential for understanding equipment function and specifications
+    check:
+      type: field_presence
+      field: legend[*].description
+      condition: not null
+      post_check:
+        type: string_length
+        min: 5  # Minimum 5 characters for meaningful description
+        max: 150
+      description: "Each legend entry must have a meaningful description (5-150 characters)"
+
+  - id: QA-104-CORE
+    description: Verify symbol tags follow standard format
+    severity: high
+    category: legend
+    rationale: Consistent tag format aids in coordination, equipment tracking, and construction administration
+    check:
+      type: field_format
+      field: symbols[*].symbol_tag
+      patterns:
+        - '^[A-Z]{1,3}-\d{1,4}[A-Z]?$'     # e.g., "P-101", "AHU-1A", "LP-42"
+        - '^[A-Z]{1,3}\d{1,4}[A-Z]?$'      # e.g., "P101", "AHU1A" (no hyphen)
+        - '^[A-Z]{2,4}-[A-Z]{1,2}-\d{1,4}$'  # e.g., "BLDG-A-P-101"
+      description: "Symbol tags must follow discipline standard format (e.g., 'P-101', 'AHU-1A')"
+
+  - id: QA-105-CORE
+    description: Verify no duplicate symbol tags on drawing
+    severity: critical
+    category: legend
+    rationale: Duplicate tags cause ambiguity in specifications, schedules, and field identification
+    check:
+      type: uniqueness
+      field: symbols[*].symbol_tag
+      scope: current_sheet
+      condition: unique
+      case_sensitive: false  # "P-101" and "p-101" are considered duplicates
+      description: "Each symbol tag must be unique within the drawing sheet"
+
+  - id: QA-106-CORE
+    description: Verify legend is organized by type or discipline
+    severity: medium
+    category: legend
+    rationale: Organized legends improve drawing readability and reduce symbol lookup time
+    check:
+      type: custom
+      function: validate_legend_organization
+      params:
+        grouping_field: legend[*].symbol_type
+        allowed_groups: ["mechanical", "electrical", "plumbing", "fire_protection", "controls", "low_voltage"]
+        require_grouped: true
+      logic: |
+        # Check that legend entries are grouped by type
+        legend_entries = get_field(legend_field)
+        current_group = None
+        group_changes = 0
+
+        for entry in legend_entries:
+            if entry.symbol_type != current_group:
+                group_changes += 1
+                current_group = entry.symbol_type
+
+        # If group changes > number of groups, legend is not properly organized
+        num_groups = len(set([e.symbol_type for e in legend_entries]))
+        if group_changes > num_groups:
+            return fail(f"Legend appears disorganized: {group_changes} group changes for {num_groups} groups")
+
+        return pass()
+
+  - id: QA-107-CORE
+    description: Verify legend includes discipline designator for multi-discipline drawings
+    severity: high
+    category: legend
+    rationale: Multi-discipline coordination drawings require clear discipline identification in legend
+    check:
+      type: field_presence
+      field: legend[*].discipline
+      condition: not null
+      scope: symbols[discipline_count > 1]
+      description: "Multi-discipline drawings must include discipline designator in legend (e.g., 'M', 'E', 'P')"
+
+  - id: QA-108-CORE
+    description: Verify legend symbol graphics are present and not placeholder
+    severity: high
+    category: legend
+    rationale: Visual symbol representation in legend is essential for field personnel identification
+    check:
+      type: field_presence
+      field: legend[*].symbol_graphic
+      condition: not null
+      post_check:
+        type: graphic_validation
+        min_size: 100  # Minimum 100 pixels or equivalent
+        require_visible: true
+      description: "Legend must include visual symbol graphic for each entry"
+
+  - id: QA-109-CORE
+    description: Warn if legend contains more than 30 unique symbols
+    severity: low
+    category: legend
+    rationale: Drawings with excessive symbols may be too complex or require multiple sheets
+    check:
+      type: count
+      field: legend
+      max_count: 30
+      condition: count <= max_count
+      message: "Legend contains {count} symbols, consider splitting into multiple sheets (recommended max: 30)"
+
+  - id: QA-110-CORE
+    description: Verify symbol size annotation is included for scaled equipment
+    severity: medium
+    category: legend
+    rationale: Physical dimensions are needed for clearance verification and coordination
+    check:
+      type: field_presence
+      field: legend[symbol_type="equipment"].physical_size
+      condition: not null
+      allow_missing_percent: 20  # Allow 20% for non-physical symbols (tags, labels)
+      description: "Equipment symbols should include physical size annotation (e.g., '24\"x36\"', '600mm dia.')"
+
+  - id: QA-111-CORE
+    description: Verify legend includes manufacturer or model for specified equipment
+    severity: medium
+    category: legend
+    rationale: Specified equipment requires manufacturer/model for procurement and shop drawing review
+    check:
+      type: field_presence
+      field: legend[specified=true].manufacturer_model
+      condition: not null
+      description: "Specified equipment in legend must reference manufacturer or model number"
+
+  - id: QA-112-CORE
+    description: Verify symbol tag prefixes are consistent with discipline standards
+    severity: high
+    category: legend
+    rationale: Standardized prefixes (e.g., 'P-' for pumps, 'AHU-' for air handlers) aid multi-discipline coordination
+    check:
+      type: custom
+      function: validate_tag_prefix_consistency
+      params:
+        prefix_map:
+          mechanical:
+            - prefix: "AHU-"
+              symbol_type: "air_handler"
+            - prefix: "P-"
+              symbol_type: "pump"
+            - prefix: "F-"
+              symbol_type: "fan"
+            - prefix: "EF-"
+              symbol_type: "exhaust_fan"
+          electrical:
+            - prefix: "LP-"
+              symbol_type: "lighting_panel"
+            - prefix: "PP-"
+              symbol_type: "power_panel"
+            - prefix: "MCC-"
+              symbol_type: "motor_control_center"
+          plumbing:
+            - prefix: "WH-"
+              symbol_type: "water_heater"
+            - prefix: "PRV-"
+              symbol_type: "pressure_reducing_valve"
+      logic: |
+        # Validate that symbol tags use consistent discipline-appropriate prefixes
+        symbols = get_field(symbols_field)
+        discipline = get_field(title_block.discipline)
+        prefix_map = params.prefix_map.get(discipline.lower())
+
+        if not prefix_map:
+            return skip(f"No prefix validation for discipline: {discipline}")
+
+        violations = []
+        for symbol in symbols:
+            expected_prefix = None
+            for mapping in prefix_map:
+                if symbol.symbol_type == mapping.symbol_type:
+                    expected_prefix = mapping.prefix
+                    break
+
+            if expected_prefix and not symbol.symbol_tag.startswith(expected_prefix):
+                violations.append(f"Symbol {symbol.symbol_tag} (type: {symbol.symbol_type}) should use prefix '{expected_prefix}'")
+
+        if violations:
+            return fail("\n".join(violations))
+
+        return pass()
+
+  - id: QA-113-CORE
+    description: Verify legend includes performance data for rated equipment
+    severity: medium
+    category: legend
+    rationale: Performance ratings (CFM, HP, GPM, kW) are needed for load calculations and equipment verification
+    check:
+      type: field_presence
+      field: legend[requires_rating=true].performance_data
+      condition: not null
+      description: "Rated equipment must include performance data in legend (e.g., 'CFM', 'HP', 'kW', 'GPM')"
+
+  - id: QA-114-CORE
+    description: Verify legend entries match symbol library standard
+    severity: medium
+    category: legend
+    rationale: Non-standard symbols may not be recognized or may conflict with other disciplines
+    check:
+      type: custom
+      function: validate_symbol_library_compliance
+      params:
+        symbol_library_path: "standards/symbol_library.json"
+        allow_custom_symbols: true
+        require_custom_annotation: true
+      logic: |
+        # Check that symbols match approved symbol library
+        # If custom symbols are used, they must be annotated as "CUSTOM" or "NON-STANDARD"
+        symbols = get_field(symbols_field)
+        symbol_library = load_symbol_library(params.symbol_library_path)
+
+        non_standard = []
+        for symbol in symbols:
+            if symbol.symbol_tag not in symbol_library:
+                if not symbol.is_custom_annotated and not params.allow_custom_symbols:
+                    non_standard.append(symbol.symbol_tag)
+
+        if non_standard:
+            return warn(f"Non-standard symbols detected: {', '.join(non_standard)}")
+
+        return pass()
+
+  - id: QA-115-CORE
+    description: Verify legend includes electrical characteristics for powered equipment
+    severity: high
+    category: legend
+    rationale: Electrical data (voltage, phase, HP, FLA) is required for circuit design and panel schedules
+    check:
+      type: field_presence
+      field: legend[requires_power=true].electrical_data
+      condition: not null
+      post_check:
+        type: field_presence
+        subfields:
+          - voltage
+          - phases
+          - horsepower_or_kw
+      description: "Powered equipment must include electrical characteristics (voltage, phase, HP/kW)"

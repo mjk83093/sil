@@ -1,0 +1,434 @@
+# QA/QC Rule: Electrical Circuit Identification Consistency
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: Electrical power plan drawings with panel schedules
+# Reference: NEC 2023 Articles 210 (Branch Circuits), 240 (Overcurrent Protection), 408 (Panelboards)
+
+rules:
+  - id: QA-301-ELEC
+    description: Verify all home run arrows on plan reference valid panel circuit numbers
+    severity: critical
+    category: consistency
+    rationale: Home run arrows must match panel schedule circuits for field installation and troubleshooting (NEC 408.4 requires circuit identification)
+    code_reference: NEC 2023 408.4
+    check:
+      type: cross_reference
+      reference_field: plan.home_runs[*].circuit_number
+      target_field: schedules.panel_schedule[*].circuits[*].circuit_number
+      condition: all_exist
+      params:
+        allow_spare: true  # Allow "SPARE" or "FUTURE" circuit references
+        format_match: true  # "LP1-12" must match "12" in LP1 schedule
+      description: "Every home run arrow must reference an existing circuit in the corresponding panel schedule"
+
+  - id: QA-302-ELEC
+    description: Verify circuit numbers in panel schedule match circuits shown on plan
+    severity: high
+    category: consistency
+    rationale: Circuits listed in schedule but not shown on plan may indicate missing home runs or orphaned schedule entries
+    check:
+      type: cross_reference
+      reference_field: schedules.panel_schedule[*].circuits[*].circuit_number
+      target_field: plan.home_runs[*].circuit_number
+      condition: all_exist
+      params:
+        allow_spare_percent: 20  # Allow up to 20% spare/future circuits not shown on plan
+        exclude_circuit_descriptions: ["SPARE", "FUTURE", "SPACE"]
+      description: "Circuits in panel schedule should have corresponding home runs on plan (excluding spares)"
+
+  - id: QA-303-ELEC
+    description: Verify circuit load on plan matches panel schedule load
+    severity: high
+    category: consistency
+    rationale: Load discrepancies between plan annotations and schedule indicate calculation errors or outdated data
+    code_reference: NEC 2023 220.40
+    check:
+      type: custom
+      function: validate_circuit_load_consistency
+      params:
+        plan_load_field: plan.home_runs[*].annotated_load_va
+        schedule_load_field: schedules.panel_schedule[*].circuits[*].load_va
+        tolerance_percent: 5  # Allow 5% tolerance for rounding
+      logic: |
+        # Match circuit numbers and compare loads
+        home_runs = get_field(plan_load_field)
+        schedule_circuits = get_field(schedule_load_field)
+
+        mismatches = []
+        for home_run in home_runs:
+            circuit_num = home_run.circuit_number
+            panel_id = home_run.panel_id
+
+            # Find matching schedule circuit
+            schedule_circuit = find_circuit(schedule_circuits, panel_id, circuit_num)
+            if not schedule_circuit:
+                continue  # Will be caught by QA-301
+
+            # Compare loads within tolerance
+            plan_load = home_run.annotated_load_va
+            schedule_load = schedule_circuit.load_va
+
+            if plan_load and schedule_load:
+                percent_diff = abs(plan_load - schedule_load) / schedule_load * 100
+                if percent_diff > params.tolerance_percent:
+                    mismatches.append(f"{panel_id}-{circuit_num}: Plan shows {plan_load}VA, schedule shows {schedule_load}VA ({percent_diff:.1f}% difference)")
+
+        if mismatches:
+            return fail("\n".join(mismatches))
+
+        return pass()
+
+  - id: QA-304-ELEC
+    description: Verify wire size annotations on plan match panel schedule conductor size
+    severity: high
+    category: consistency
+    rationale: Wire size discrepancies can lead to undersized conductors and NEC violations (NEC 310.12 requires proper conductor sizing)
+    code_reference: NEC 2023 310.12, Table 310.16
+    check:
+      type: custom
+      function: validate_wire_size_consistency
+      params:
+        plan_wire_field: plan.home_runs[*].wire_size
+        schedule_wire_field: schedules.panel_schedule[*].circuits[*].conductor_size
+      logic: |
+        # Match circuits and compare wire sizes
+        home_runs = get_field(plan_wire_field)
+        schedule_circuits = get_field(schedule_wire_field)
+
+        mismatches = []
+        for home_run in home_runs:
+            if not home_run.wire_size:
+                continue  # Wire size annotation is optional on plan
+
+            circuit_num = home_run.circuit_number
+            panel_id = home_run.panel_id
+            schedule_circuit = find_circuit(schedule_circuits, panel_id, circuit_num)
+
+            if schedule_circuit and schedule_circuit.conductor_size:
+                # Normalize wire size format: "12 AWG", "#12", "12", "#12 AWG" all equivalent
+                plan_size = normalize_wire_size(home_run.wire_size)
+                schedule_size = normalize_wire_size(schedule_circuit.conductor_size)
+
+                if plan_size != schedule_size:
+                    mismatches.append(f"{panel_id}-{circuit_num}: Plan shows {home_run.wire_size}, schedule shows {schedule_circuit.conductor_size}")
+
+        if mismatches:
+            return fail("\n".join(mismatches))
+
+        return pass()
+
+  - id: QA-305-ELEC
+    description: Verify voltage drop annotations are present for circuits exceeding 100 feet
+    severity: medium
+    category: compliance
+    rationale: NEC recommends voltage drop not exceed 3% for branch circuits and 5% total (NEC 210.19(A) Informational Note No. 4)
+    code_reference: NEC 2023 210.19(A) Informational Note No. 4
+    check:
+      type: custom
+      function: validate_voltage_drop_annotation
+      params:
+        length_threshold_feet: 100
+        require_calculation: true
+      logic: |
+        # Check for voltage drop annotations on long circuits
+        home_runs = get_field(plan.home_runs)
+        missing_vd = []
+
+        for home_run in home_runs:
+            circuit_length = calculate_circuit_length(home_run)
+
+            if circuit_length > params.length_threshold_feet:
+                if not home_run.voltage_drop_annotated:
+                    missing_vd.append(f"{home_run.panel_id}-{home_run.circuit_number}: {circuit_length}ft circuit missing voltage drop annotation")
+
+        if missing_vd:
+            return warn("\n".join(missing_vd))
+
+        return pass()
+
+  - id: QA-306-ELEC
+    description: Verify GFCI protection is annotated where required by NEC 210.8
+    severity: critical
+    category: compliance
+    rationale: GFCI protection is mandatory for specific locations per NEC 210.8 (bathrooms, kitchens, outdoor, etc.)
+    code_reference: NEC 2023 210.8
+    check:
+      type: custom
+      function: validate_gfci_protection
+      params:
+        gfci_required_locations:
+          - "bathroom"
+          - "kitchen"
+          - "outdoor"
+          - "garage"
+          - "unfinished_basement"
+          - "crawlspace"
+          - "within_6ft_of_sink"
+        gfci_required_receptacle_types:
+          - "125V_15A"
+          - "125V_20A"
+      logic: |
+        # Check that receptacles in GFCI-required locations have GFCI annotation
+        receptacles = get_field(plan.receptacles)
+        missing_gfci = []
+
+        for receptacle in receptacles:
+            location = receptacle.location_type.lower()
+            voltage = receptacle.voltage
+            amperage = receptacle.amperage
+
+            # Check if GFCI required by location
+            requires_gfci = location in params.gfci_required_locations
+
+            # Check if GFCI required by receptacle type (125V, 15A or 20A)
+            if voltage == 125 and amperage in [15, 20]:
+                requires_gfci = True
+
+            if requires_gfci and not receptacle.gfci_protected:
+                missing_gfci.append(f"Receptacle at {receptacle.location} ({location}) requires GFCI protection per NEC 210.8")
+
+        if missing_gfci:
+            return fail("\n".join(missing_gfci))
+
+        return pass()
+
+  - id: QA-307-ELEC
+    description: Verify AFCI protection is annotated for dwelling unit branch circuits per NEC 210.12
+    severity: critical
+    category: compliance
+    rationale: AFCI protection is required for most 120V branch circuits in dwelling units per NEC 210.12
+    code_reference: NEC 2023 210.12
+    check:
+      type: custom
+      function: validate_afci_protection
+      params:
+        occupancy_type_field: title_block.occupancy_type
+        afci_required_occupancies: ["dwelling", "residential", "apartment", "condo"]
+        afci_exempt_circuits:
+          - "bathroom"  # GFCI only
+          - "garage"    # GFCI only
+          - "outdoor"   # GFCI only
+      logic: |
+        # Check if AFCI required based on occupancy
+        occupancy = get_field(occupancy_type_field).lower()
+        if occupancy not in params.afci_required_occupancies:
+            return skip("AFCI not required for non-dwelling occupancies")
+
+        # Check that 120V branch circuits have AFCI protection (except GFCI-only locations)
+        circuits = get_field(schedules.panel_schedule[*].circuits)
+        missing_afci = []
+
+        for circuit in circuits:
+            if circuit.voltage == 120 and circuit.circuit_type == "branch":
+                location = circuit.location.lower()
+
+                # Skip AFCI for GFCI-only locations
+                if location in params.afci_exempt_circuits:
+                    continue
+
+                if not circuit.afci_protected:
+                    missing_afci.append(f"Circuit {circuit.circuit_number} ({location}) requires AFCI protection per NEC 210.12")
+
+        if missing_afci:
+            return fail("\n".join(missing_afci))
+
+        return pass()
+
+  - id: QA-308-ELEC
+    description: Verify circuit numbering follows panel odd/even phase convention
+    severity: medium
+    category: best_practice
+    rationale: Odd circuits on one phase, even on other phase simplifies load balancing and troubleshooting
+    check:
+      type: custom
+      function: validate_circuit_phase_numbering
+      params:
+        phase_field: schedules.panel_schedule[*].phases
+      logic: |
+        # Validate odd/even convention for single-phase panels
+        panels = get_field(schedules.panel_schedule)
+
+        violations = []
+        for panel in panels:
+            if panel.phases == 1:
+                # Single-phase panels should alternate: odd on one leg, even on other
+                for circuit in panel.circuits:
+                    circuit_num = parse_circuit_number(circuit.circuit_number)
+                    phase = circuit.phase
+
+                    # Odd circuits typically on phase A, even on phase B
+                    expected_phase = "A" if circuit_num % 2 == 1 else "B"
+                    if phase and phase != expected_phase:
+                        violations.append(f"{panel.panel_id} circuit {circuit_num}: Phase {phase} does not follow odd/even convention (expected {expected_phase})")
+
+        if violations:
+            return warn("\n".join(violations))
+
+        return pass()
+
+  - id: QA-309-ELEC
+    description: Verify multi-pole circuit numbering is consecutive
+    severity: medium
+    category: best_practice
+    rationale: Multi-pole breakers must occupy consecutive panel positions (e.g., circuits 5-6 for 2-pole)
+    check:
+      type: custom
+      function: validate_multipole_circuit_numbering
+      logic: |
+        # Check that 2-pole and 3-pole circuits use consecutive numbers
+        panels = get_field(schedules.panel_schedule)
+
+        violations = []
+        for panel in panels:
+            for circuit in panel.circuits:
+                if circuit.poles > 1:
+                    circuit_num = parse_circuit_number(circuit.circuit_number)
+
+                    # For 2-pole, should be "5-6", "7-8", etc.
+                    # For 3-pole, should be "5-7", "9-11", etc. (every other position)
+                    if "-" in str(circuit.circuit_number):
+                        parts = circuit.circuit_number.split("-")
+                        start = int(parts[0])
+                        end = int(parts[1])
+
+                        if circuit.poles == 2 and (end - start) != 1:
+                            violations.append(f"{panel.panel_id} circuit {circuit.circuit_number}: 2-pole circuit should use consecutive numbers (e.g., '5-6')")
+                        elif circuit.poles == 3 and (end - start) != 2:
+                            violations.append(f"{panel.panel_id} circuit {circuit.circuit_number}: 3-pole circuit should span 3 positions (e.g., '5-7')")
+
+        if violations:
+            return warn("\n".join(violations))
+
+        return pass()
+
+  - id: QA-310-ELEC
+    description: Verify conduit size annotations are present for home runs
+    severity: medium
+    category: completeness
+    rationale: Conduit sizing is required for proper raceway fill calculation per NEC 300.17 and Chapter 9
+    code_reference: NEC 2023 300.17, Chapter 9 Table 4
+    check:
+      type: field_presence
+      field: plan.home_runs[*].conduit_size
+      condition: not null
+      allow_missing_percent: 20  # Allow 20% for surface-mount/direct burial where conduit not used
+      description: "Home run arrows should include conduit size annotation (e.g., '3/4\" EMT', '1\" RGS')"
+
+  - id: QA-311-ELEC
+    description: Verify circuit identification matches between plan, schedule, and specifications
+    severity: high
+    category: consistency
+    rationale: Consistent circuit identification across documents prevents field confusion and change order disputes
+    check:
+      type: consistency
+      fields:
+        - plan.home_runs[*].circuit_number
+        - schedules.panel_schedule[*].circuits[*].circuit_number
+        - specifications.circuit_list[*].circuit_number
+      scope: cross_document
+      condition: identical_set
+      description: "Circuit numbers must be consistent across plan, schedule, and specifications"
+
+  - id: QA-312-ELEC
+    description: Verify emergency/legally required circuits are clearly identified
+    severity: critical
+    category: compliance
+    rationale: NEC Article 700 and 701 require clear identification of emergency and legally required standby circuits
+    code_reference: NEC 2023 700.10, 701.10
+    check:
+      type: custom
+      function: validate_emergency_circuit_identification
+      params:
+        emergency_identifier_patterns:
+          - "^EM-"
+          - "^E-"
+          - "EMERGENCY"
+        required_annotation: true
+      logic: |
+        # Check that emergency circuits are marked with red annotation or "EM" prefix
+        circuits = get_field(schedules.panel_schedule[*].circuits)
+        emergency_circuits = [c for c in circuits if c.circuit_type == "emergency" or c.system_type == "emergency"]
+
+        missing_identification = []
+        for circuit in emergency_circuits:
+            has_em_prefix = any(pattern in circuit.circuit_number.upper() for pattern in params.emergency_identifier_patterns)
+            has_em_annotation = circuit.emergency_annotated
+
+            if not (has_em_prefix or has_em_annotation):
+                missing_identification.append(f"Emergency circuit {circuit.circuit_number} lacks clear emergency identification")
+
+        if missing_identification:
+            return fail("\n".join(missing_identification))
+
+        return pass()
+
+  - id: QA-313-ELEC
+    description: Verify dedicated equipment circuits are identified in schedule
+    severity: medium
+    category: completeness
+    rationale: Dedicated equipment circuits require special attention for coordination and maintenance
+    check:
+      type: field_presence
+      field: schedules.panel_schedule[*].circuits[dedicated=true].equipment_id
+      condition: not null
+      description: "Dedicated equipment circuits must reference specific equipment tag or location"
+
+  - id: QA-314-ELEC
+    description: Verify shared neutral circuits are properly identified
+    severity: critical
+    category: compliance
+    rationale: Shared neutral circuits (MWBC) require handle ties and have special overcurrent protection requirements (NEC 210.4)
+    code_reference: NEC 2023 210.4
+    check:
+      type: custom
+      function: validate_shared_neutral_identification
+      logic: |
+        # Multi-wire branch circuits (MWBC) must be identified and have handle-tied breakers
+        circuits = get_field(schedules.panel_schedule[*].circuits)
+
+        mwbc_violations = []
+        circuit_groups = group_circuits_by_neutral(circuits)
+
+        for neutral_id, circuit_group in circuit_groups.items():
+            if len(circuit_group) > 1:  # Multiple circuits sharing neutral
+                # Verify all circuits in group are marked as MWBC
+                for circuit in circuit_group:
+                    if not circuit.mwbc_identified:
+                        mwbc_violations.append(f"Circuit {circuit.circuit_number} shares neutral but not marked as MWBC")
+
+                    if not circuit.handle_tied:
+                        mwbc_violations.append(f"Circuit {circuit.circuit_number} in MWBC must have handle-tied breaker per NEC 210.4(B)")
+
+        if mwbc_violations:
+            return fail("\n".join(mwbc_violations))
+
+        return pass()
+
+  - id: QA-315-ELEC
+    description: Verify continuous load circuits have 125% factor applied per NEC 210.19(A)(1)
+    severity: high
+    category: compliance
+    rationale: Continuous loads (3+ hours) require conductors and overcurrent protection sized at 125% per NEC 210.19(A)(1)
+    code_reference: NEC 2023 210.19(A)(1), 210.20(A)
+    check:
+      type: custom
+      function: validate_continuous_load_factor
+      logic: |
+        # Check that continuous load circuits have 125% factor applied
+        circuits = get_field(schedules.panel_schedule[*].circuits)
+
+        continuous_violations = []
+        for circuit in circuits:
+            if circuit.continuous_load:
+                # Check if load calculation includes 125% factor
+                calculated_load = circuit.calculated_load_va
+                connected_load = circuit.connected_load_va
+
+                if calculated_load < (connected_load * 1.25):
+                    factor_applied = (calculated_load / connected_load) * 100
+                    continuous_violations.append(f"Circuit {circuit.circuit_number}: Continuous load requires 125% factor (only {factor_applied:.0f}% applied)")
+
+        if continuous_violations:
+            return fail("\n".join(continuous_violations))
+
+        return pass()

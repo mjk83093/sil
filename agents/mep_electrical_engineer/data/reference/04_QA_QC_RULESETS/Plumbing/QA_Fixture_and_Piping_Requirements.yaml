@@ -1,0 +1,643 @@
+# QA/QC Rule: IPC Plumbing Fixture and Piping Requirements
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Agent: Plumbing Code Specialist (Agent 4)
+# Applies to: Plumbing discipline
+# Reference: IPC 2021, Domestic_Water_Sizing.md, UPC 2021
+# Integration: Links to PLUMBING/Domestic_Water_Sizing.md design procedures
+
+rules:
+  - id: QA-IPC-403.1-001
+    description: Validate minimum fixture count per occupancy (IPC Table 403.1)
+    severity: critical
+    category: plumbing_compliance
+    rationale: Inadequate fixture counts violate code and cause occupant complaints. IPC Table 403.1 specifies minimum fixtures by building type and occupancy load.
+    code_reference: IPC 2021 Table 403.1 - Minimum Number of Required Plumbing Fixtures
+    check:
+      type: custom
+      function: validate_fixture_count
+      params:
+        occupancy_field: project.occupancy_classification
+        occupant_load_field: project.design_occupant_load
+        fixture_schedule_field: schedules.plumbing_fixture_schedule
+    validation_logic: |
+      # IPC Table 403.1 (simplified - common occupancies)
+      fixture_requirements = {
+        "assembly": {  # Theaters, auditoriums
+          "water_closets_male": "1 per 125",
+          "water_closets_female": "1 per 65",
+          "lavatories": "1 per 200",
+          "drinking_fountains": "1 per 500"
+        },
+        "business": {  # Offices
+          "water_closets": "1 per 25 (0-50 persons), then 1 per 50",
+          "lavatories": "1 per 40",
+          "drinking_fountains": "1 per 100"
+        },
+        "educational": {  # Schools
+          "water_closets_male": "1 per 50",
+          "water_closets_female": "1 per 25",
+          "lavatories": "1 per 50",
+          "drinking_fountains": "1 per 100"
+        },
+        "residential": {  # Apartments, hotels
+          "water_closets": "1 per dwelling/guest room",
+          "lavatories": "1 per dwelling/guest room",
+          "bathtub_shower": "1 per dwelling/guest room",
+          "kitchen_sink": "1 per dwelling"
+        }
+      }
+
+      occupancy = project.occupancy_classification
+      occupant_load = project.design_occupant_load
+      actual_fixtures = PARSE_FIXTURE_SCHEDULE(schedules.plumbing_fixture_schedule)
+
+      IF occupancy NOT IN fixture_requirements:
+        WARN: "Unknown occupancy '{occupancy}' - manual verification required"
+        RETURN
+
+      requirements = fixture_requirements[occupancy]
+      FOR fixture_type, requirement IN requirements:
+        required_count = CALCULATE_FIXTURE_COUNT(requirement, occupant_load)
+        actual_count = COUNT_FIXTURES(actual_fixtures, fixture_type)
+
+        IF actual_count < required_count:
+          FAIL: "Insufficient {fixture_type}: {actual_count} provided, {required_count} required per IPC Table 403.1 ({occupancy}, {occupant_load} occupants)"
+    validation_examples:
+      - scenario: "Office 100 occupants, 4 WCs provided (requires 1 per 25 for first 50, then 1 per 50)"
+        occupancy: "business", load: 100, fixtures: {wc: 4}
+        required: "2 (first 50) + 1 (next 50) = 3 minimum"
+        expected_result: PASS
+
+      - scenario: "School 400 students, 8 female WCs (requires 1 per 25)"
+        occupancy: "educational", load: 400, fixtures: {wc_female: 8}
+        required: "400/25 = 16"
+        expected_result: FAIL
+
+      - scenario: "Assembly 600 occupants, 5 male WCs (requires 1 per 125)"
+        occupancy: "assembly", load: 600, fixtures: {wc_male: 5}
+        required: "600/125 = 4.8 → 5"
+        expected_result: PASS
+
+  - id: QA-ADA-001
+    description: Validate accessible fixture count and location (IPC 403.1, ICC A117.1)
+    severity: critical
+    category: accessibility_compliance
+    rationale: ADA/accessibility requirements mandate minimum number and proper installation of accessible fixtures. Non-compliance violates federal law.
+    code_reference: IPC 2021 Section 403.1.1, ICC A117.1, ADA Standards for Accessible Design
+    check:
+      type: custom
+      function: validate_accessible_fixtures
+      params:
+        total_fixtures_field: schedules.plumbing_fixture_schedule
+        accessible_fixtures_field: fixtures.accessible_compliant
+    validation_logic: |
+      # Accessibility requirements (simplified)
+      accessibility_rules = {
+        "water_closets": "5% of total, minimum 1 per restroom",
+        "lavatories": "5% of total, minimum 1 per restroom",
+        "drinking_fountains": "50% accessible (or provide dual-level)",
+        "bathing": "Minimum 1 accessible tub/shower per building type"
+      }
+
+      fixture_schedule = schedules.plumbing_fixture_schedule
+
+      FOR fixture_type IN ["water_closets", "lavatories", "drinking_fountains"]:
+        total_count = COUNT_FIXTURES(fixture_schedule, fixture_type)
+        accessible_count = COUNT_FIXTURES(fixture_schedule, fixture_type, accessible=true)
+
+        IF fixture_type == "water_closets" OR fixture_type == "lavatories":
+          required_accessible = MAX(CEILING(total_count * 0.05), 1)  # 5%, min 1
+        ELSE IF fixture_type == "drinking_fountains":
+          required_accessible = CEILING(total_count * 0.50)  # 50%
+
+        IF accessible_count < required_accessible:
+          FAIL: "{fixture_type} accessible count {accessible_count} less than required {required_accessible} (IPC 403.1.1, ADA)"
+    validation_examples:
+      - scenario: "Restroom with 6 WCs, 1 accessible"
+        fixtures: {wc_total: 6, wc_accessible: 1}
+        required: "CEILING(6*0.05) = 1"
+        expected_result: PASS
+
+      - scenario: "Building with 4 drinking fountains, only 1 accessible"
+        fixtures: {df_total: 4, df_accessible: 1}
+        required: "CEILING(4*0.50) = 2"
+        expected_result: FAIL
+
+      - scenario: "Restroom with 10 lavatories, no accessible fixtures shown"
+        fixtures: {lav_total: 10, lav_accessible: 0}
+        required: "CEILING(10*0.05) = 1"
+        expected_result: FAIL
+
+  - id: QA-IPC-608-001
+    description: Validate backflow prevention device requirements (IPC Chapter 6)
+    severity: critical
+    category: plumbing_compliance
+    rationale: Backflow preventers protect potable water from contamination. Required at specific hazard locations per IPC 608.
+    code_reference: IPC 2021 Section 608 - Protection of Potable Water Supply
+    check:
+      type: custom
+      function: validate_backflow_prevention
+      params:
+        connection_field: plumbing_connections
+        hazard_level_field: connection.hazard_level
+        backflow_device_field: connection.backflow_preventer_type
+    validation_logic: |
+      # IPC 608 Backflow Prevention Requirements
+      backflow_requirements = {
+        "high_hazard": ["RPZ", "AVB"],  # Reduced pressure zone, atmospheric vacuum breaker
+        "medium_hazard": ["DCVA", "AVB", "PVB"],  # Double check valve assembly, pressure vacuum breaker
+        "low_hazard": ["DCVA", "DCA"]  # Dual check assembly
+      }
+
+      FOR connection IN plumbing_connections:
+        hazard_level = connection.hazard_level
+        device_type = connection.backflow_preventer_type
+
+        IF hazard_level IS NULL:
+          WARN: "Connection '{connection.tag}' missing hazard level classification"
+          CONTINUE
+
+        IF hazard_level IN backflow_requirements:
+          acceptable_devices = backflow_requirements[hazard_level]
+
+          IF device_type NOT IN acceptable_devices:
+            FAIL: "Connection '{connection.tag}' {hazard_level} hazard requires backflow preventer type {acceptable_devices}, {device_type} shown (IPC 608)"
+
+      # Specific applications requiring backflow prevention
+      required_backflow_applications = [
+        "boiler_makeup", "cooling_tower", "irrigation", "fire_sprinkler",
+        "chemical_feed", "medical_equipment", "laboratory_sink"
+      ]
+
+      FOR application IN required_backflow_applications:
+        connections = FILTER_CONNECTIONS(type=application)
+        FOR connection IN connections:
+          IF connection.backflow_preventer_type IS NULL:
+            FAIL: "{application} connection '{connection.tag}' requires backflow preventer (IPC 608)"
+    validation_examples:
+      - scenario: "Cooling tower makeup with RPZ backflow preventer"
+        connection: {type: "cooling_tower", hazard: "high_hazard", device: "RPZ"}
+        expected_result: PASS
+
+      - scenario: "Irrigation connection with no backflow preventer shown"
+        connection: {type: "irrigation", device: null}
+        expected_result: FAIL
+
+      - scenario: "Fire sprinkler with DCVA (should be RPZ for high hazard)"
+        connection: {type: "fire_sprinkler", hazard: "high_hazard", device: "DCVA"}
+        expected_result: FAIL
+
+  - id: QA-IPC-903-001
+    description: Validate vent sizing and location (IPC Chapter 9)
+    severity: high
+    category: plumbing_compliance
+    rationale: Properly sized and located vents prevent trap seal loss and ensure drainage system function. Undersized vents cause gurgling, slow drains, sewer gas entry.
+    code_reference: IPC 2021 Chapter 9 - Vents, Table 906.1
+    check:
+      type: custom
+      function: validate_vent_sizing
+      params:
+        drainage_field: plans.drainage_piping
+        vent_field: plans.vent_piping
+        vent_sizing_table: "IPC_Table_906.1"
+    validation_logic: |
+      # Simplified - actual IPC Table 906.1 has many conditions
+      FOR drain_pipe IN plans.drainage_piping:
+        IF drain_pipe.requires_vent:
+          connected_vent = FIND_VENT(drain_pipe.fixture_unit_load)
+
+          IF connected_vent IS NULL:
+            FAIL: "Drain pipe {drain_pipe.tag} serving {drain_pipe.fixture_unit_load} DFU has no vent shown (IPC 903)"
+
+          # Check vent size vs drain size
+          min_vent_size = LOOKUP_IPC_TABLE_906_1(drain_pipe.size, drain_pipe.fixture_unit_load)
+          IF connected_vent.size < min_vent_size:
+            FAIL: "Vent {connected_vent.tag} size {connected_vent.size} less than required {min_vent_size} for {drain_pipe.fixture_unit_load} DFU (IPC Table 906.1)"
+    validation_examples:
+      - scenario: "3\" drain (10 DFU) with 2\" vent"
+        drain: {size: "3\"", dfu: 10}, vent: {size: "2\""}
+        expected_result: PASS
+
+      - scenario: "4\" drain (50 DFU) with 1.5\" vent (undersized)"
+        drain: {size: "4\"", dfu: 50}, vent: {size: "1.5\""}
+        expected_result: FAIL
+
+      - scenario: "Drain with no vent shown"
+        drain: {size: "2\"", dfu: 5}, vent: null
+        expected_result: FAIL
+
+  - id: QA-IPC-1002-001
+    description: Validate trap requirements for fixtures (IPC Section 1002)
+    severity: critical
+    category: plumbing_compliance
+    rationale: Every fixture must have an approved trap to prevent sewer gas entry. Missing or improper traps create health hazards.
+    code_reference: IPC 2021 Section 1002 - Fixture Traps, Table 1002.1
+    check:
+      type: custom
+      function: validate_fixture_traps
+      params:
+        fixture_field: schedules.plumbing_fixture_schedule
+        trap_field: fixtures.trap_type
+    validation_logic: |
+      FOR fixture IN schedules.plumbing_fixture_schedule:
+        fixture_type = fixture.type
+
+        # Fixtures requiring individual traps
+        IF fixture_type IN ["lavatory", "sink", "bathtub", "shower", "floor_drain"]:
+          IF fixture.trap_type IS NULL:
+            FAIL: "Fixture {fixture.tag} ({fixture_type}) missing trap specification (IPC 1002)"
+
+          # Check trap size appropriate for fixture
+          min_trap_size = LOOKUP_MINIMUM_TRAP_SIZE(fixture_type)
+          IF fixture.trap_size < min_trap_size:
+            FAIL: "Fixture {fixture.tag} trap size {fixture.trap_size} less than minimum {min_trap_size} (IPC Table 1002.1)"
+
+        # Water closets have integral traps
+        IF fixture_type == "water_closet":
+          IF fixture.trap_type == "external":
+            FAIL: "Water closet {fixture.tag} should have integral trap, not external (IPC 1002.2)"
+    validation_examples:
+      - scenario: "Lavatory with 1-1/4\" P-trap"
+        fixture: {type: "lavatory", trap_type: "P-trap", trap_size: "1-1/4\""}
+        expected_result: PASS
+
+      - scenario: "Kitchen sink with no trap noted"
+        fixture: {type: "sink", trap_type: null}
+        expected_result: FAIL
+
+      - scenario: "Water closet with integral trap (correct)"
+        fixture: {type: "water_closet", trap_type: "integral"}
+        expected_result: PASS
+
+  - id: QA-IPC-605-001
+    description: Validate water heater T&P relief valve and discharge piping (IPC Section 605)
+    severity: critical
+    category: plumbing_compliance
+    rationale: T&P relief valves prevent water heater explosions. Improper installation or discharge piping creates life-safety hazard.
+    code_reference: IPC 2021 Section 605.4, 605.5 - Temperature and Pressure Relief
+    check:
+      type: custom
+      function: validate_water_heater_safety
+      params:
+        equipment_field: schedules.equipment_schedule
+        equipment_type: ["water_heater", "storage_tank"]
+    validation_logic: |
+      FOR equipment IN schedules.equipment_schedule:
+        IF equipment.type IN ["water_heater", "storage_tank"]:
+          # Check T&P relief valve present
+          IF NOT equipment.has_tp_relief_valve:
+            FAIL: "Water heater {equipment.tag} missing T&P relief valve (IPC 605.4)"
+
+          # Check discharge piping
+          IF equipment.tp_discharge_piping IS NULL:
+            FAIL: "Water heater {equipment.tag} T&P relief discharge piping not shown (IPC 605.5)"
+          ELSE:
+            discharge = equipment.tp_discharge_piping
+            # Discharge must terminate within 6\" of floor or approved receptor
+            IF discharge.termination_height_above_floor_inches > 6:
+              FAIL: "Water heater {equipment.tag} T&P discharge terminates {discharge.termination_height_above_floor_inches}\" above floor, maximum 6\" (IPC 605.5)"
+
+            # Discharge pipe same size or larger than relief valve
+            IF discharge.pipe_size < equipment.tp_relief_valve_size:
+              FAIL: "Water heater {equipment.tag} discharge pipe {discharge.pipe_size} smaller than relief valve {equipment.tp_relief_valve_size} (IPC 605.5)"
+    validation_examples:
+      - scenario: "Water heater with 3/4\" T&P valve, 3/4\" discharge to floor drain"
+        equipment: {tag: "WH-1", tp_valve: true, valve_size: "3/4\"", discharge: {size: "3/4\"", height: 4}}
+        expected_result: PASS
+
+      - scenario: "Water heater with no T&P valve shown"
+        equipment: {tag: "WH-2", tp_valve: false}
+        expected_result: FAIL
+
+      - scenario: "Water heater T&P discharge terminates 18\" above floor"
+        equipment: {tag: "WH-3", discharge: {height: 18}}
+        expected_result: FAIL
+
+  - id: QA-IPC-308-001
+    description: Validate water heater seismic restraints (IPC Section 308)
+    severity: high
+    category: plumbing_compliance
+    rationale: Seismic restraints prevent water heater tip-over during earthquakes, avoiding gas leaks, water damage, and fires. Required in seismic zones.
+    code_reference: IPC 2021 Section 308 - Protection Against Physical Damage
+    check:
+      type: custom
+      function: validate_seismic_restraints
+      params:
+        equipment_field: schedules.equipment_schedule
+        equipment_type: "water_heater"
+        seismic_zone_field: project.seismic_design_category
+    validation_logic: |
+      # Seismic restraints required in SDC C, D, E, F
+      IF project.seismic_design_category IN ["C", "D", "E", "F"]:
+        FOR equipment IN schedules.equipment_schedule:
+          IF equipment.type == "water_heater":
+            IF NOT equipment.has_seismic_restraints:
+              FAIL: "Water heater {equipment.tag} requires seismic restraints in SDC {project.seismic_design_category} (IPC 308)"
+
+            # Check restraint details shown
+            IF equipment.seismic_restraints.upper_strap IS NULL OR equipment.seismic_restraints.lower_strap IS NULL:
+              WARN: "Water heater {equipment.tag} seismic restraint details incomplete (upper and lower straps required)"
+    validation_examples:
+      - scenario: "Water heater in SDC D with upper/lower straps shown"
+        equipment: {tag: "WH-1", seismic: {upper: true, lower: true}}, sdc: "D"
+        expected_result: PASS
+
+      - scenario: "Water heater in SDC E with no seismic restraints"
+        equipment: {tag: "WH-2", seismic: false}, sdc: "E"
+        expected_result: FAIL
+
+      - scenario: "Water heater in SDC A (low seismic)"
+        equipment: {tag: "WH-3", seismic: false}, sdc: "A"
+        expected_result: PASS
+
+  - id: QA-IPC-610-001
+    description: Validate domestic water pipe sizing (IPC Table 610.3)
+    severity: high
+    category: plumbing_compliance
+    rationale: Undersized piping causes low pressure, inadequate flow, and system failure. Oversizing wastes material and increases cost.
+    code_reference: IPC 2021 Table 610.3 - Water Distribution System Design Criteria
+    check:
+      type: custom
+      function: validate_pipe_sizing
+      params:
+        pipe_field: plans.domestic_water_piping
+        fixture_units_field: pipe.fixture_units_served
+        pressure_field: pipe.available_pressure_psi
+    validation_logic: |
+      # Reference: Domestic_Water_Sizing.md, IPC Table 610.3
+      FOR pipe IN plans.domestic_water_piping:
+        fixture_units = pipe.fixture_units_served
+        pressure = pipe.available_pressure_psi
+        pipe_size = pipe.size
+
+        # Lookup maximum WSFU for pipe size and pressure from IPC Table 610.3
+        max_wsfu = LOOKUP_IPC_TABLE_610_3(pipe_size, pressure)
+
+        IF fixture_units > max_wsfu:
+          FAIL: "Pipe {pipe.tag} size {pipe_size} inadequate for {fixture_units} WSFU at {pressure} psi (max {max_wsfu} WSFU per IPC Table 610.3)"
+
+        # Check velocity within reasonable limits (4-8 fps typical)
+        velocity = CALCULATE_VELOCITY(pipe.flow_gpm, pipe_size)
+        IF velocity > 8:
+          WARN: "Pipe {pipe.tag} velocity {velocity:.1f} fps exceeds recommended 8 fps (noise/erosion concern)"
+    validation_examples:
+      - scenario: "1\" pipe carrying 15 WSFU at 50 psi"
+        pipe: {size: "1\"", wsfu: 15, pressure: 50}
+        table_max: "18 WSFU at 50 psi per IPC Table 610.3"
+        expected_result: PASS
+
+      - scenario: "3/4\" pipe carrying 10 WSFU at 40 psi (over capacity)"
+        pipe: {size: "3/4\"", wsfu: 10, pressure: 40}
+        table_max: "5 WSFU at 40 psi"
+        expected_result: FAIL
+
+      - scenario: "2\" pipe with 10 fps velocity"
+        pipe: {size: "2\"", velocity: 10}
+        expected_result: WARN
+
+  - id: QA-IPC-903.2-001
+    description: Validate wet vent configuration (IPC Section 903.2)
+    severity: medium
+    category: plumbing_compliance
+    rationale: Wet vents serve dual purpose as drain and vent. Improper configuration causes drainage issues and code violations.
+    code_reference: IPC 2021 Section 903.2 - Wet Venting
+    check:
+      type: custom
+      function: validate_wet_vent
+      params:
+        vent_field: plans.vent_piping
+        vent_type: "wet_vent"
+    validation_logic: |
+      FOR vent IN plans.vent_piping:
+        IF vent.type == "wet_vent":
+          # Wet vent must be 2\" minimum (most common requirement)
+          IF vent.size < 2:
+            FAIL: "Wet vent {vent.tag} size {vent.size}\" less than 2\" minimum (IPC 903.2)"
+
+          # Wet vent can serve limited fixture units
+          IF vent.fixture_units_served > 4:
+            WARN: "Wet vent {vent.tag} serving {vent.fixture_units_served} DFU may exceed limits (verify IPC 903.2 applicability)"
+
+          # Horizontal wet vent must grade minimum 1/4\" per foot
+          IF vent.orientation == "horizontal":
+            IF vent.slope_inch_per_foot < 0.25:
+              FAIL: "Horizontal wet vent {vent.tag} slope {vent.slope_inch_per_foot}\" per foot less than 1/4\" minimum (IPC 903.2)"
+    validation_examples:
+      - scenario: "2\" wet vent serving lavatory and bathtub (4 DFU total)"
+        vent: {type: "wet_vent", size: 2, dfu: 4}
+        expected_result: PASS
+
+      - scenario: "1-1/2\" wet vent (undersized)"
+        vent: {type: "wet_vent", size: 1.5}
+        expected_result: FAIL
+
+      - scenario: "Horizontal wet vent with 1/8\" per foot slope"
+        vent: {type: "wet_vent", orientation: "horizontal", slope: 0.125}
+        expected_result: FAIL
+
+  - id: QA-IPC-604-001
+    description: Validate hot water circulation system (IPC Section 604.10)
+    severity: medium
+    category: plumbing_compliance
+    rationale: Hot water recirculation prevents long waits for hot water at distant fixtures. System must be properly designed and pumped.
+    code_reference: IPC 2021 Section 604.10 - Hot Water Systems
+    check:
+      type: custom
+      function: validate_hw_circulation
+      params:
+        system_field: plans.hot_water_system
+        circulation_field: system.recirculation_system
+    validation_logic: |
+      IF plans.hot_water_system.has_recirculation:
+        circulation = plans.hot_water_system.recirculation_system
+
+        # Check for circulation pump
+        IF NOT circulation.has_pump:
+          FAIL: "Hot water recirculation system requires pump (IPC 604.10)"
+
+        # Check for return line
+        IF NOT circulation.has_return_line:
+          FAIL: "Hot water recirculation system missing return line (IPC 604.10)"
+
+        # Check balancing valves or controls
+        IF NOT (circulation.has_balancing_valves OR circulation.has_thermostatic_controls):
+          WARN: "Hot water recirculation should have balancing valves or thermostatic controls for efficiency"
+
+        # Check insulation on recirculation piping
+        IF NOT circulation.piping_insulated:
+          WARN: "Hot water recirculation piping should be insulated per energy code"
+    validation_examples:
+      - scenario: "HW recirc with pump, return line, balancing valves"
+        hw_system: {recirc: true, pump: true, return: true, balance: true}
+        expected_result: PASS
+
+      - scenario: "HW recirc system with no pump shown"
+        hw_system: {recirc: true, pump: false}
+        expected_result: FAIL
+
+      - scenario: "Domestic water system with no recirculation"
+        hw_system: {recirc: false}
+        expected_result: PASS
+
+  - id: QA-IPC-1108-001
+    description: Validate interceptor/separator requirements (IPC Chapter 11)
+    severity: high
+    category: plumbing_compliance
+    rationale: Grease, oil, sand interceptors prevent drainage system clogs and protect treatment plants. Required for specific applications.
+    code_reference: IPC 2021 Chapter 11 - Storm Drainage, Section 1108 - Interceptors
+    check:
+      type: custom
+      function: validate_interceptors
+      params:
+        space_field: hvac_schedule.spaces
+        drainage_field: plans.drainage_piping
+    validation_logic: |
+      # Applications requiring interceptors
+      interceptor_requirements = {
+        "kitchen_commercial": "grease_interceptor",
+        "auto_repair": "oil_separator",
+        "car_wash": "sand_oil_separator",
+        "laundry_commercial": "lint_interceptor",
+        "medical_facility": "medical_waste_interceptor"
+      }
+
+      FOR space IN hvac_schedule.spaces:
+        IF space.occupancy_type IN interceptor_requirements:
+          required_interceptor = interceptor_requirements[space.occupancy_type]
+
+          # Find drainage from this space
+          space_drains = FILTER_DRAINS(location=space.name)
+          FOR drain IN space_drains:
+            IF NOT drain.has_interceptor:
+              FAIL: "Drain {drain.tag} from {space.occupancy_type} '{space.name}' requires {required_interceptor} (IPC Chapter 11)"
+
+            IF drain.interceptor_type != required_interceptor:
+              WARN: "Drain {drain.tag} has {drain.interceptor_type}, {required_interceptor} typically required"
+    validation_examples:
+      - scenario: "Commercial kitchen with grease interceptor on drain"
+        space: {occupancy: "kitchen_commercial"}, drain: {interceptor: "grease_interceptor"}
+        expected_result: PASS
+
+      - scenario: "Auto repair shop drain without oil separator"
+        space: {occupancy: "auto_repair"}, drain: {interceptor: null}
+        expected_result: FAIL
+
+      - scenario: "Office space (no interceptor required)"
+        space: {occupancy: "office"}, drain: {interceptor: null}
+        expected_result: PASS
+
+  # Additional rules 11-20 (condensed for token efficiency)
+
+  - id: QA-IPC-709-001
+    description: Validate pipe material compatibility (IPC Table 605.3)
+    severity: high
+    category: plumbing_compliance
+    rationale: Incompatible pipe materials cause corrosion, leaks, and system failure. IPC specifies approved materials for each application.
+    code_reference: IPC 2021 Table 605.3 - Pipe Materials
+    check:
+      type: field_presence
+      fields: [piping.material]
+      condition: in_approved_list
+    validation_examples:
+      - {scenario: "Copper Type L for domestic water", expected: PASS}
+      - {scenario: "PVC for hot water (not approved)", expected: FAIL}
+
+  - id: QA-IPC-1003-001
+    description: Validate trap seal protection (IPC Section 1003)
+    severity: medium
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 1003 - Trap Seal Protection
+    validation_examples:
+      - {scenario: "Trap arm length within limits", expected: PASS}
+      - {scenario: "Trap arm too long (exceeds table)", expected: FAIL}
+
+  - id: QA-IPC-702-001
+    description: Validate fixture supply pipe sizing (IPC Table 604.5)
+    severity: medium
+    category: plumbing_compliance
+    code_reference: IPC 2021 Table 604.5 - Size of Fixture Supply
+    validation_examples:
+      - {scenario: "1/2\" supply to lavatory", expected: PASS}
+      - {scenario: "3/8\" supply to water closet (undersized)", expected: FAIL}
+
+  - id: QA-IPC-305-001
+    description: Validate protection against freezing (IPC Section 305)
+    severity: high
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 305 - Protection Against Freezing
+    validation_examples:
+      - {scenario: "Exterior piping insulated/heat traced", expected: PASS}
+      - {scenario: "Unprotected exterior pipe in cold climate", expected: FAIL}
+
+  - id: QA-IPC-607-001
+    description: Validate water hammer arrestors (IPC Section 604.9)
+    severity: low
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 604.9 - Water Hammer
+    validation_examples:
+      - {scenario: "Arrestors on quick-closing valves", expected: PASS}
+      - {scenario: "No arrestors on washing machine valves", expected: WARN}
+
+  - id: QA-IPC-604-002
+    description: Validate expansion tank on water heater (IPC Section 608.3)
+    severity: medium
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 608.3 - Thermal Expansion Control
+    validation_examples:
+      - {scenario: "Closed system with expansion tank", expected: PASS}
+      - {scenario: "Closed system without expansion tank", expected: FAIL}
+
+  - id: QA-IPC-903-002
+    description: Validate common vent configuration (IPC Section 903.3)
+    severity: medium
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 903.3 - Common Vent
+    validation_examples:
+      - {scenario: "Back-to-back lavatories with common vent", expected: PASS}
+      - {scenario: "Common vent exceeding distance limits", expected: FAIL}
+
+  - id: QA-IPC-712-001
+    description: Validate pipe support spacing (IPC Table 308.5)
+    severity: low
+    category: plumbing_compliance
+    code_reference: IPC 2021 Table 308.5 - Hanger Spacing
+    validation_examples:
+      - {scenario: "Copper pipe supported every 6'", expected: PASS}
+      - {scenario: "PVC pipe support spacing exceeds 4'", expected: FAIL}
+
+  - id: QA-IPC-1101-001
+    description: Validate storm drain sizing (IPC Chapter 11, Table 1106.3)
+    severity: high
+    category: plumbing_compliance
+    code_reference: IPC 2021 Chapter 11 - Storm Drainage
+    validation_examples:
+      - {scenario: "Roof drain sized for rainfall intensity", expected: PASS}
+      - {scenario: "Storm drain undersized for roof area", expected: FAIL}
+
+  - id: QA-IPC-606-001
+    description: Validate pressure-reducing valve requirements (IPC Section 604.8)
+    severity: medium
+    category: plumbing_compliance
+    code_reference: IPC 2021 Section 604.8 - Maximum Pressure
+    validation_examples:
+      - {scenario: "PRV installed where static pressure >80 psi", expected: PASS}
+      - {scenario: "No PRV with 100 psi supply", expected: FAIL}
+
+# Integration with Domestic_Water_Sizing.md
+domestic_water_integration:
+  reference_document: "Domestic_Water_Sizing.md"
+  sections:
+    - section: "Fixture Unit Method (Lines 110-180)"
+      rules: ["QA-IPC-610-001"]
+    - section: "Pipe Sizing Tables (Lines 256-299)"
+      rules: ["QA-IPC-610-001"]
+    - section: "Backflow Prevention (Lines 19-23)"
+      rules: ["QA-IPC-608-001"]
+
+# Version History
+version_history:
+  - version: 1.0.0
+    date: 2025-01-22
+    author: Plumbing Code Specialist (Agent 4)
+    changes: Initial creation with 20 IPC plumbing compliance rules covering fixtures, piping, venting, safety devices

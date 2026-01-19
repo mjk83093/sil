@@ -1,0 +1,22 @@
+{
+    "wire_sizes": {
+        "14 AWG": {"ampacity_75c": 15, "circular_mils": 4110},
+        "12 AWG": {"ampacity_75c": 20, "circular_mils": 6530},
+        "10 AWG": {"ampacity_75c": 30, "circular_mils": 10380},
+        "8 AWG": {"ampacity_75c": 50, "circular_mils": 16510},
+        "6 AWG": {"ampacity_75c": 65, "circular_mils": 26240},
+        "4 AWG": {"ampacity_75c": 85, "circular_mils": 41740},
+        "3 AWG": {"ampacity_75c": 100, "circular_mils": 52620},
+        "2 AWG": {"ampacity_75c": 115, "circular_mils": 66360},
+        "1 AWG": {"ampacity_75c": 130, "circular_mils": 83690},
+        "1/0 AWG": {"ampacity_75c": 150, "circular_mils": 105600},
+        "2/0 AWG": {"ampacity_75c": 175, "circular_mils": 133100},
+        "3/0 AWG": {"ampacity_75c": 200, "circular_mils": 167800},
+        "4/0 AWG": {"ampacity_75c": 230, "circular_mils": 211600},
+        "250 kcmil": {"ampacity_75c": 255, "circular_mils": 250000},
+        "300 kcmil": {"ampacity_75c": 285, "circular_mils": 300000},
+        "350 kcmil": {"ampacity_75c": 310, "circular_mils": 350000},
+        "400 kcmil": {"ampacity_75c": 335, "circular_mils": 400000},
+        "500 kcmil": {"ampacity_75c": 380, "circular_mils": 500000}
+    }
+}

@@ -1,0 +1,262 @@
+# QA/QC Rule: Electrical Panel Load Calculations
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: Electrical drawings with panel schedules
+# Reference: NEC 2023 Articles 220 (Load Calculations), 408 (Panelboards)
+
+rules:
+  - id: QA-201-ELEC
+    description: Verify panel schedule includes load calculation summary
+    severity: critical
+    category: compliance
+    rationale: NEC requires load calculations to properly size panels and prevent overloading (NEC 220.40, 220.82)
+    code_reference: NEC 2023 Article 220
+    check:
+      type: field_presence
+      field: schedules.panel_schedule.load_calculation_included
+      condition: equals true
+      scope: symbols[class="panel"]
+
+  - id: QA-202-ELEC
+    description: Verify total connected load is calculated for each panel
+    severity: critical
+    category: compliance
+    rationale: Total connected load determines minimum panel and feeder sizing per NEC 220
+    code_reference: NEC 2023 220.40
+    check:
+      type: field_presence
+      fields:
+        - schedules.panel_schedule.total_connected_load
+      condition: not null
+      post_check:
+        type: numeric_range
+        min: 0
+        max: 1000000  # 1 MVA reasonable upper limit
+        units: VA
+
+  - id: QA-203-ELEC
+    description: Verify demand load is calculated and less than or equal to connected load
+    severity: critical
+    category: compliance
+    rationale: Demand load with diversity factors determines actual feeder/service sizing (NEC 220.42, Table 220.42)
+    code_reference: NEC 2023 220.40, 220.42
+    check:
+      type: field_presence
+      fields:
+        - schedules.panel_schedule.demand_load
+      condition: not null
+      post_check:
+        type: comparison
+        condition: demand_load <= total_connected_load
+        message: "Demand load cannot exceed total connected load"
+
+  - id: QA-204-ELEC
+    description: Verify panel main breaker rating is adequate for demand load
+    severity: critical
+    category: compliance
+    rationale: Main breaker must be sized to carry the calculated demand load (NEC 408.36)
+    code_reference: NEC 2023 408.36
+    check:
+      type: custom
+      function: validate_panel_main_breaker
+      params:
+        voltage_field: schedules.panel_schedule.voltage
+        main_breaker_field: schedules.panel_schedule.main_breaker
+        demand_load_field: schedules.panel_schedule.demand_load
+        phases_field: schedules.panel_schedule.phases
+      logic: |
+        # Calculate minimum main breaker rating
+        # For single-phase: I = VA / V
+        # For three-phase: I = VA / (V * sqrt(3))
+        demand_load = get_field(demand_load_field)
+        voltage = parse_voltage(get_field(voltage_field))  # e.g., "120/208" -> 208V line-to-line
+        phases = get_field(phases_field)
+        main_breaker = parse_amperage(get_field(main_breaker_field))  # e.g., "100A" -> 100
+
+        if phases == 1:
+            min_ampacity = demand_load / voltage
+        elif phases == 3:
+            min_ampacity = demand_load / (voltage * 1.732)
+        else:
+            return error("Invalid phase configuration")
+
+        # Main breaker must be >= minimum ampacity (standard sizes per NEC 240.6)
+        if main_breaker < min_ampacity:
+            return fail(f"Main breaker {main_breaker}A undersized for {min_ampacity:.1f}A demand")
+
+        return pass()
+
+  - id: QA-205-ELEC
+    description: Verify circuit breaker ratings do not exceed busbar rating
+    severity: critical
+    category: compliance
+    rationale: Circuit breakers cannot exceed panelboard bus rating (NEC 408.36)
+    code_reference: NEC 2023 408.36
+    check:
+      type: custom
+      function: validate_circuit_breakers_vs_bus
+      params:
+        bus_rating_field: schedules.panel_schedule.bus_rating
+        circuits_field: schedules.panel_schedule.circuits
+      logic: |
+        bus_rating = parse_amperage(get_field(bus_rating_field))
+        circuits = get_field(circuits_field)
+
+        for circuit in circuits:
+            breaker_rating = parse_amperage(circuit.breaker)
+            if breaker_rating > bus_rating:
+                return fail(f"Circuit {circuit.circuit_number} breaker {breaker_rating}A exceeds bus rating {bus_rating}A")
+
+        return pass()
+
+  - id: QA-206-ELEC
+    description: Verify sum of circuit breaker ratings complies with 120% rule
+    severity: high
+    category: compliance
+    rationale: NEC limits total circuit breaker ratings to 120% of panel rating for lighting/appliance panels
+    code_reference: NEC 2023 408.36
+    check:
+      type: custom
+      function: validate_120_percent_rule
+      params:
+        main_breaker_field: schedules.panel_schedule.main_breaker
+        circuits_field: schedules.panel_schedule.circuits
+        panel_type_field: schedules.panel_schedule.panel_type
+      logic: |
+        main_breaker = parse_amperage(get_field(main_breaker_field))
+        circuits = get_field(circuits_field)
+        panel_type = get_field(panel_type_field)
+
+        # 120% rule applies to lighting and appliance branch circuit panelboards
+        if panel_type not in ["lighting", "appliance", "lighting_appliance"]:
+            return skip("120% rule does not apply to power panelboards")
+
+        total_breaker_rating = sum([parse_amperage(c.breaker) * c.poles for c in circuits])
+        max_allowed = main_breaker * 1.20
+
+        if total_breaker_rating > max_allowed:
+            return fail(f"Total breaker rating {total_breaker_rating}A exceeds 120% of main ({max_allowed}A)")
+
+        return pass()
+
+  - id: QA-207-ELEC
+    description: Verify individual circuit loads are documented
+    severity: high
+    category: completeness
+    rationale: Circuit loads are needed for load balancing and future modifications
+    check:
+      type: field_presence
+      field: schedules.panel_schedule.circuits[*].load_va
+      condition: not null
+      allow_missing_count: 0
+
+  - id: QA-208-ELEC
+    description: Verify panel voltage and phase configuration is specified
+    severity: critical
+    category: completeness
+    rationale: Voltage and phase determine wire sizing, breaker selection, and equipment compatibility
+    check:
+      type: field_presence
+      fields:
+        - schedules.panel_schedule.voltage
+        - schedules.panel_schedule.phases
+      condition: not null
+
+  - id: QA-209-ELEC
+    description: Verify voltage format matches standard electrical system voltages
+    severity: high
+    category: compliance
+    rationale: Only standard system voltages are permitted (NEC 210.6, 215.2)
+    code_reference: NEC 2023 210.6
+    check:
+      type: enumeration
+      field: schedules.panel_schedule.voltage
+      allowed_values:
+        - "120"
+        - "120/208"
+        - "120/240"
+        - "277"
+        - "277/480"
+        - "240"
+        - "480"
+        - "600"
+      description: "Voltage must be a standard electrical system voltage"
+
+  - id: QA-210-ELEC
+    description: Verify circuit descriptions are provided
+    severity: medium
+    category: completeness
+    rationale: Circuit descriptions aid in identification during maintenance and troubleshooting
+    check:
+      type: field_presence
+      field: schedules.panel_schedule.circuits[*].description
+      condition: not null
+      allow_missing_percent: 5  # Allow up to 5% spare circuits without descriptions
+
+  - id: QA-211-ELEC
+    description: Verify panel location or designation is specified
+    severity: high
+    category: completeness
+    rationale: Panel location is required for coordination drawings and field identification
+    check:
+      type: field_presence
+      field: schedules.panel_schedule.panel_id
+      condition: not null
+
+  - id: QA-212-ELEC
+    description: Warn if panel is loaded above 80% of main breaker rating
+    severity: medium
+    category: best_practice
+    rationale: Industry best practice maintains 20% spare capacity for future modifications
+    check:
+      type: custom
+      function: validate_spare_capacity
+      params:
+        main_breaker_field: schedules.panel_schedule.main_breaker
+        demand_load_field: schedules.panel_schedule.demand_load
+        voltage_field: schedules.panel_schedule.voltage
+        phases_field: schedules.panel_schedule.phases
+      logic: |
+        main_breaker = parse_amperage(get_field(main_breaker_field))
+        demand_load = get_field(demand_load_field)
+        voltage = parse_voltage(get_field(voltage_field))
+        phases = get_field(phases_field)
+
+        if phases == 1:
+            demand_ampacity = demand_load / voltage
+        elif phases == 3:
+            demand_ampacity = demand_load / (voltage * 1.732)
+
+        utilization = (demand_ampacity / main_breaker) * 100
+
+        if utilization > 80:
+            return warn(f"Panel loading at {utilization:.1f}% exceeds recommended 80% threshold")
+
+        return pass()
+
+  - id: QA-213-ELEC
+    description: Verify circuit numbering follows standard odd/even convention
+    severity: low
+    category: best_practice
+    rationale: Odd circuits on one phase, even on other simplifies balancing and troubleshooting
+    check:
+      type: custom
+      function: validate_circuit_numbering
+      params:
+        circuits_field: schedules.panel_schedule.circuits
+        phases_field: schedules.panel_schedule.phases
+      logic: |
+        circuits = get_field(circuits_field)
+        phases = get_field(phases_field)
+
+        if phases == 1:
+            return skip("Single-phase panels do not require odd/even convention")
+
+        for circuit in circuits:
+            circuit_num = parse_circuit_number(circuit.circuit_number)
+            if circuit.poles == 1:
+                # Single-pole breakers should alternate phases
+                # Typically odd on phase A, even on phase B
+                pass  # Simplified check
+
+        return pass()  # Full implementation would check phase balance

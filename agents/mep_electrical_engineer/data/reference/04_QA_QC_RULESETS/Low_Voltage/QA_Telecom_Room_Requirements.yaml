@@ -1,0 +1,487 @@
+# QA/QC Rule: Telecommunications Room Requirements
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: Low voltage telecommunications drawings
+# Reference: TIA-569-D (Telecommunications Pathways and Spaces), TIA-568 (Structured Cabling)
+
+rules:
+  - id: QA-601-LV
+    description: Verify telecommunications room size meets TIA-569 minimum based on building area
+    severity: critical
+    category: compliance
+    rationale: TIA-569 Table 1 specifies minimum telecom room size based on gross building area served
+    code_reference: TIA-569-D Table 1
+    check:
+      type: custom
+      function: validate_telecom_room_size
+      params:
+        min_sizes_by_building_area:
+          5000: 50      # Up to 5,000 sqft = 50 sqft min TR
+          8000: 90      # 5,001-8,000 sqft = 90 sqft min
+          10000: 120    # 8,001-10,000 sqft = 120 sqft min
+          15000: 150    # 10,001-15,000 sqft = 150 sqft min
+        absolute_minimum: 50  # sqft
+        recommended_aspect_ratio: [1.5, 2.0]  # width:depth
+      logic: |
+        # Validate telecom room dimensions
+        telecom_rooms = get_field(plan.telecom_rooms)
+        size_violations = []
+
+        for tr in telecom_rooms:
+            served_area = tr.served_building_area_sqft
+
+            # Determine required size based on served area
+            required_size = params.absolute_minimum
+            for area_threshold, min_size in sorted(params.min_sizes_by_building_area.items()):
+                if served_area <= area_threshold:
+                    required_size = min_size
+                    break
+                required_size = min_size  # Use largest if area exceeds all thresholds
+
+            # Check actual room size
+            actual_size = tr.room_length_ft * tr.room_width_ft
+            if actual_size < required_size:
+                size_violations.append(f"Telecom room {tr.room_id}: {actual_size} sqft < required {required_size} sqft for {served_area} sqft building area (TIA-569 Table 1)")
+
+            # Check aspect ratio (recommended, not critical)
+            aspect_ratio = max(tr.room_length_ft, tr.room_width_ft) / min(tr.room_length_ft, tr.room_width_ft)
+            if aspect_ratio > max(params.recommended_aspect_ratio):
+                size_violations.append(f"Telecom room {tr.room_id}: Aspect ratio {aspect_ratio:.1f}:1 exceeds recommended {max(params.recommended_aspect_ratio)}:1")
+
+        if size_violations:
+            return fail("\n".join(size_violations))
+
+        return pass()
+
+  - id: QA-602-LV
+    description: Verify equipment clearances meet TIA-569 minimum dimensions
+    severity: critical
+    category: compliance
+    rationale: TIA-569 requires minimum clearances for equipment access, cable management, and maintenance
+    code_reference: TIA-569-D Section 5.3
+    check:
+      type: custom
+      function: validate_telecom_equipment_clearances
+      params:
+        min_clearances:
+          front_of_rack: 36  # inches (3 feet)
+          rear_of_rack: 30   # inches (2.5 feet)
+          side_of_rack: 24   # inches (2 feet) if side access required
+          working_space_width: 36  # inches minimum aisle width
+      logic: |
+        # Validate clearances around telecom equipment racks
+        telecom_rooms = get_field(plan.telecom_rooms)
+        clearance_violations = []
+
+        for tr in telecom_rooms:
+            # Check rack clearances
+            for rack in tr.equipment_racks:
+                # Front clearance
+                front_clearance = measure_clearance(rack, "front")
+                if front_clearance < params.min_clearances.front_of_rack:
+                    clearance_violations.append(f"{tr.room_id} Rack {rack.id}: Front clearance {front_clearance}\" < minimum {params.min_clearances.front_of_rack}\" (TIA-569)")
+
+                # Rear clearance
+                rear_clearance = measure_clearance(rack, "rear")
+                if rear_clearance < params.min_clearances.rear_of_rack:
+                    clearance_violations.append(f"{tr.room_id} Rack {rack.id}: Rear clearance {rear_clearance}\" < minimum {params.min_clearances.rear_of_rack}\"")
+
+                # Side clearance (if required for side access)
+                if rack.requires_side_access:
+                    side_clearance = measure_clearance(rack, "side")
+                    if side_clearance < params.min_clearances.side_of_rack:
+                        clearance_violations.append(f"{tr.room_id} Rack {rack.id}: Side clearance {side_clearance}\" < minimum {params.min_clearances.side_of_rack}\"")
+
+        if clearance_violations:
+            return fail("\n".join(clearance_violations))
+
+        return pass()
+
+  - id: QA-603-LV
+    description: Verify grounding busbar and bonding conductor are shown in telecom room
+    severity: critical
+    category: compliance
+    rationale: TIA-607-C requires telecommunications bonding backbone (TBB) and grounding busbar in each TR
+    code_reference: TIA-607-C Section 4.3
+    check:
+      type: field_presence
+      fields:
+        - plan.telecom_rooms[*].grounding_busbar
+        - plan.telecom_rooms[*].bonding_conductor_to_ground
+      condition: not null
+      description: "Each telecom room must show grounding busbar and bonding conductor per TIA-607-C"
+
+  - id: QA-604-LV
+    description: Verify grounding busbar size meets TIA-607 requirements
+    severity: high
+    category: compliance
+    rationale: TIA-607-C specifies minimum busbar size based on number of connections and system voltage
+    code_reference: TIA-607-C Table 1
+    check:
+      type: custom
+      function: validate_grounding_busbar_size
+      params:
+        min_busbar_sizes:
+          small_room: "1/4\" x 2\" x 12\""   # Up to 10 racks
+          medium_room: "1/4\" x 4\" x 12\""  # 11-20 racks
+          large_room: "1/4\" x 6\" x 12\""   # 21+ racks
+        min_bonding_conductor: "#6 AWG"
+      logic: |
+        # Validate busbar sizing
+        telecom_rooms = get_field(plan.telecom_rooms)
+        busbar_violations = []
+
+        for tr in telecom_rooms:
+            num_racks = len(tr.equipment_racks)
+
+            # Determine required busbar size
+            if num_racks <= 10:
+                required_size = params.min_busbar_sizes.small_room
+            elif num_racks <= 20:
+                required_size = params.min_busbar_sizes.medium_room
+            else:
+                required_size = params.min_busbar_sizes.large_room
+
+            # Check if busbar size is specified
+            if not tr.grounding_busbar_size:
+                busbar_violations.append(f"{tr.room_id}: Grounding busbar size not specified (required: {required_size} for {num_racks} racks)")
+
+            # Check bonding conductor size
+            if not tr.bonding_conductor_size:
+                busbar_violations.append(f"{tr.room_id}: Bonding conductor size not specified (minimum {params.min_bonding_conductor})")
+            elif parse_wire_size(tr.bonding_conductor_size) < parse_wire_size(params.min_bonding_conductor):
+                busbar_violations.append(f"{tr.room_id}: Bonding conductor {tr.bonding_conductor_size} < minimum {params.min_bonding_conductor}")
+
+        if busbar_violations:
+            return fail("\n".join(busbar_violations))
+
+        return pass()
+
+  - id: QA-605-LV
+    description: Verify cable pathway sizing meets TIA-568 fill ratios
+    severity: high
+    category: compliance
+    rationale: TIA-568 specifies maximum fill ratios for cable pathways to prevent crushing and maintain bend radius
+    code_reference: TIA-568.0-D Annex B
+    check:
+      type: custom
+      function: validate_pathway_fill_ratios
+      params:
+        max_fill_ratios:
+          conduit: 0.40      # 40% for 4+ cables
+          cable_tray: 0.50   # 50% depth for data cables
+          j_hook: 0.60       # 60% capacity for J-hooks
+          basket_tray: 0.50
+      logic: |
+        # Validate cable pathway fill
+        pathways = get_field(plan.cable_pathways)
+        fill_violations = []
+
+        for pathway in pathways:
+            pathway_type = pathway.pathway_type.lower()
+            max_fill = params.max_fill_ratios.get(pathway_type)
+
+            if not max_fill:
+                continue
+
+            # Calculate fill ratio
+            if pathway.cable_count and pathway.capacity:
+                actual_fill = pathway.cable_count / pathway.capacity
+                if actual_fill > max_fill:
+                    fill_violations.append(f"Pathway {pathway.id}: Fill ratio {actual_fill:.0%} > maximum {max_fill:.0%} for {pathway_type}")
+
+        if fill_violations:
+            return fail("\n".join(fill_violations))
+
+        return pass()
+
+  - id: QA-606-LV
+    description: Verify outlet density meets TIA-568 work area requirements
+    severity: medium
+    category: compliance
+    rationale: TIA-568 recommends minimum outlet density for work areas based on space type
+    code_reference: TIA-568.0-D Section 8.3
+    check:
+      type: custom
+      function: validate_outlet_density
+      params:
+        min_outlets_by_space_type:
+          office: 2          # 2 outlets per work area
+          open_office: 2
+          conference_room: 1  # 1 outlet per 10 sqft or per seat
+          classroom: 1        # 1 outlet per 10 sqft
+      logic: |
+        # Validate work area outlet density
+        work_areas = get_field(plan.work_areas)
+        outlet_violations = []
+
+        for area in work_areas:
+            space_type = area.space_type.lower().replace(" ", "_")
+            min_outlets = params.min_outlets_by_space_type.get(space_type)
+
+            if not min_outlets:
+                continue
+
+            # Calculate required outlets
+            if space_type in ["office", "open_office"]:
+                required_outlets = area.workstation_count * min_outlets
+            else:
+                # For conference/classroom, 1 per 10 sqft
+                required_outlets = area.area_sqft / 10
+
+            actual_outlets = area.telecom_outlet_count
+
+            if actual_outlets < required_outlets:
+                outlet_violations.append(f"{area.area_id}: {actual_outlets} outlets < recommended {required_outlets:.0f} for {area.space_type} (TIA-568)")
+
+        if outlet_violations:
+            return warn("\n".join(outlet_violations))
+
+        return pass()
+
+  - id: QA-607-LV
+    description: Verify fire-rated cable types are specified for plenum spaces
+    severity: critical
+    category: compliance
+    rationale: NEC 770 and 800 require plenum-rated cables (CMP, OFNP) in air handling spaces
+    code_reference: NEC 2023 770.113, 800.113
+    check:
+      type: custom
+      function: validate_plenum_cable_types
+      params:
+        plenum_cable_ratings: ["CMP", "OFNP", "BLP"]  # Communications, Optical Fiber, Busbar Link Plenum
+        non_plenum_spaces: ["non_plenum", "riser", "general"]
+      logic: |
+        # Check cable types in plenum spaces
+        cable_runs = get_field(plan.cable_runs)
+        plenum_violations = []
+
+        for cable in cable_runs:
+            if cable.space_type == "plenum" or cable.in_air_handling_space:
+                # Verify cable has plenum rating
+                if not cable.cable_rating:
+                    plenum_violations.append(f"Cable {cable.id}: Cable rating not specified for plenum space")
+                elif cable.cable_rating not in params.plenum_cable_ratings:
+                    plenum_violations.append(f"Cable {cable.id}: Cable rating '{cable.cable_rating}' not plenum-rated (requires CMP, OFNP, or BLP)")
+
+        if plenum_violations:
+            return fail("\n".join(plenum_violations))
+
+        return pass()
+
+  - id: QA-608-LV
+    description: Verify telecommunications room has dedicated HVAC system or conditioning
+    severity: high
+    category: compliance
+    rationale: TIA-569 requires environmental controls to maintain equipment operating temperature and humidity
+    code_reference: TIA-569-D Section 5.3
+    check:
+      type: field_presence
+      field: plan.telecom_rooms[*].hvac_system_dedicated
+      condition: equals true
+      description: "Telecom rooms require dedicated HVAC or environmental conditioning per TIA-569"
+
+  - id: QA-609-LV
+    description: Verify telecommunications room has adequate electrical power distribution
+    severity: critical
+    category: compliance
+    rationale: TIA-569 recommends minimum 20VA per square foot for telecom room power
+    code_reference: TIA-569-D Section 5.3
+    check:
+      type: custom
+      function: validate_telecom_room_power
+      params:
+        min_va_per_sqft: 20
+        min_circuits: 2  # Minimum 2 dedicated circuits
+      logic: |
+        # Validate power distribution
+        telecom_rooms = get_field(plan.telecom_rooms)
+        power_violations = []
+
+        for tr in telecom_rooms:
+            room_area = tr.room_length_ft * tr.room_width_ft
+            required_va = room_area * params.min_va_per_sqft
+
+            # Check if power is specified
+            if not tr.electrical_power_va:
+                power_violations.append(f"{tr.room_id}: Electrical power not specified (recommended {required_va:.0f}VA for {room_area} sqft)")
+            elif tr.electrical_power_va < required_va:
+                power_violations.append(f"{tr.room_id}: Power {tr.electrical_power_va}VA < recommended {required_va:.0f}VA (20VA/sqft)")
+
+            # Check circuit count
+            if not tr.dedicated_circuit_count or tr.dedicated_circuit_count < params.min_circuits:
+                power_violations.append(f"{tr.room_id}: Minimum {params.min_circuits} dedicated circuits required")
+
+        if power_violations:
+            return warn("\n".join(power_violations))
+
+        return pass()
+
+  - id: QA-610-LV
+    description: Verify telecommunications backbone pathways are sized appropriately
+    severity: high
+    category: compliance
+    rationale: TIA-568 requires backbone pathways sized for current and future cabling needs
+    code_reference: TIA-568.0-D Section 9.1
+    check:
+      type: custom
+      function: validate_backbone_pathway_sizing
+      params:
+        backbone_types:
+          - "riser"
+          - "interbuilding"
+          - "intrabuilding"
+        min_spare_capacity_percent: 25  # 25% spare capacity
+      logic: |
+        # Validate backbone pathway capacity
+        backbone_pathways = get_field(plan.backbone_pathways)
+        backbone_violations = []
+
+        for pathway in backbone_pathways:
+            if pathway.current_fill_percent > (100 - params.min_spare_capacity_percent):
+                backbone_violations.append(f"Backbone {pathway.id}: Current fill {pathway.current_fill_percent}% leaves < {params.min_spare_capacity_percent}% spare capacity")
+
+        if backbone_violations:
+            return warn("\n".join(backbone_violations))
+
+        return pass()
+
+  - id: QA-611-LV
+    description: Verify horizontal cable length does not exceed TIA-568 90-meter limit
+    severity: critical
+    category: compliance
+    rationale: TIA-568 limits horizontal cabling to 90 meters (295 feet) to maintain signal integrity
+    code_reference: TIA-568.0-D Section 8.2
+    check:
+      type: custom
+      function: validate_horizontal_cable_length
+      params:
+        max_horizontal_length_ft: 295  # 90 meters
+        include_patch_cords: false      # Patch cords counted separately (10m max total)
+      logic: |
+        # Check horizontal cable runs
+        cable_runs = get_field(plan.cable_runs)
+        length_violations = []
+
+        for cable in cable_runs:
+            if cable.cable_type == "horizontal":
+                if cable.length_ft > params.max_horizontal_length_ft:
+                    length_violations.append(f"Cable {cable.id}: Horizontal length {cable.length_ft}' > maximum {params.max_horizontal_length_ft}' (90m per TIA-568)")
+
+        if length_violations:
+            return fail("\n".join(length_violations))
+
+        return pass()
+
+  - id: QA-612-LV
+    description: Verify entrance facility (EF) location and size are adequate
+    severity: high
+    category: compliance
+    rationale: TIA-569 requires entrance facility for service provider demarcation and interconnection
+    code_reference: TIA-569-D Section 4
+    check:
+      type: field_presence
+      fields:
+        - plan.entrance_facility.location
+        - plan.entrance_facility.size_sqft
+      condition: not null
+      description: "Entrance facility location and size must be specified per TIA-569"
+
+  - id: QA-613-LV
+    description: Verify fiber optic cable bend radius is maintained in pathways
+    severity: high
+    category: compliance
+    rationale: TIA-568 requires minimum bend radius to prevent fiber damage (typically 10x cable diameter)
+    code_reference: TIA-568.3-D Section 5.3
+    check:
+      type: custom
+      function: validate_fiber_bend_radius
+      params:
+        min_bend_radius_multiplier: 10  # 10x cable diameter under load
+        critical_locations:
+          - "patch_panel"
+          - "equipment_rack"
+          - "conduit_bend"
+      logic: |
+        # Validate fiber optic cable bends
+        fiber_cables = get_field(plan.cable_runs[cable_type="fiber"])
+        bend_violations = []
+
+        for cable in fiber_cables:
+            cable_diameter = cable.outer_diameter_inches
+            min_bend_radius = cable_diameter * params.min_bend_radius_multiplier
+
+            # Check bends at critical locations
+            for bend in cable.bends:
+                if bend.radius_inches < min_bend_radius:
+                    bend_violations.append(f"Fiber cable {cable.id}: Bend radius {bend.radius_inches}\" < minimum {min_bend_radius:.1f}\" at {bend.location}")
+
+        if bend_violations:
+            return warn("\n".join(bend_violations))
+
+        return pass()
+
+  - id: QA-614-LV
+    description: Verify telecommunications room door is minimum 36 inches wide
+    severity: medium
+    category: compliance
+    rationale: TIA-569 requires adequate door width for equipment installation and removal
+    code_reference: TIA-569-D Section 5.3
+    check:
+      type: custom
+      function: validate_tr_door_width
+      params:
+        min_door_width_inches: 36
+        recommended_door_type: "outswing"  # For maximum interior space
+      logic: |
+        # Check telecom room door dimensions
+        telecom_rooms = get_field(plan.telecom_rooms)
+        door_violations = []
+
+        for tr in telecom_rooms:
+            if not tr.door_width_inches:
+                door_violations.append(f"{tr.room_id}: Door width not specified (minimum {params.min_door_width_inches}\" required)")
+            elif tr.door_width_inches < params.min_door_width_inches:
+                door_violations.append(f"{tr.room_id}: Door width {tr.door_width_inches}\" < minimum {params.min_door_width_inches}\"")
+
+        if door_violations:
+            return warn("\n".join(door_violations))
+
+        return pass()
+
+  - id: QA-615-LV
+    description: Verify cable support spacing meets TIA-568 requirements
+    severity: medium
+    category: compliance
+    rationale: TIA-568 specifies maximum spacing for cable supports to prevent sagging and maintain proper bend radius
+    code_reference: TIA-568.0-D Annex B
+    check:
+      type: custom
+      function: validate_cable_support_spacing
+      params:
+        max_support_spacing:
+          horizontal: 60  # inches (5 feet)
+          vertical: 60    # inches
+          j_hook: 48      # inches (4 feet)
+      logic: |
+        # Validate cable support spacing
+        cable_supports = get_field(plan.cable_supports)
+        support_violations = []
+
+        for support_run in cable_supports:
+            support_type = support_run.support_type.lower().replace(" ", "_")
+            max_spacing = params.max_support_spacing.get(support_type)
+
+            if not max_spacing:
+                continue
+
+            # Check spacing between supports
+            for i in range(len(support_run.support_points) - 1):
+                spacing = calculate_distance(support_run.support_points[i], support_run.support_points[i+1])
+                if spacing > max_spacing:
+                    support_violations.append(f"Cable support {support_run.id}: Support spacing {spacing}\" > maximum {max_spacing}\" for {support_type}")
+
+        if support_violations:
+            return warn("\n".join(support_violations))
+
+        return pass()

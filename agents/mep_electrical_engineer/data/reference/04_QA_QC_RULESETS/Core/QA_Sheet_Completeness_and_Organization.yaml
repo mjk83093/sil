@@ -1,0 +1,839 @@
+# QA/QC Rule: Sheet Completeness and Drawing Set Organization
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Agent: Document Control Specialist (Agent 5)
+# Applies to: All disciplines
+# Reference: Drawing_Type_Classification.md, ISO 19650, CAD standards
+# Integration: Implements drawing set structure validation from Drawing_Type_Classification.md
+
+rules:
+  - id: QA-ORG-001
+    description: Validate cover sheet required information is present (project directory, symbols, abbreviations)
+    severity: high
+    category: sheet_completeness
+    rationale: Cover sheet (G-001 typical) provides critical project information and serves as index. Missing cover sheet or incomplete information causes coordination issues.
+    code_reference: Drawing_Type_Classification.md Section 7.1 - Title Block Requirements
+    check:
+      type: custom
+      function: validate_cover_sheet_completeness
+      params:
+        cover_sheet_number: "G-001"
+        required_sections:
+          - project_directory
+          - drawing_index
+          - abbreviations_list
+          - symbols_legend
+          - general_notes
+    validation_logic: |
+      cover_sheet = FIND_SHEET("G-001")  # or first sheet in set
+
+      IF cover_sheet IS NULL:
+        FAIL: "Cover sheet not found in drawing set"
+        RETURN
+
+      required_sections = [
+        "project_directory", "drawing_index", "abbreviations_list",
+        "symbols_legend", "general_notes"
+      ]
+
+      FOR section IN required_sections:
+        IF NOT cover_sheet.has_section(section):
+          FAIL: "Cover sheet missing required section: {section}"
+
+      # Validate project directory completeness
+      IF cover_sheet.project_directory:
+        required_directory_fields = [
+          "owner", "architect", "engineer", "contractor", "project_location"
+        ]
+        FOR field IN required_directory_fields:
+          IF cover_sheet.project_directory[field] IS NULL:
+            WARN: "Cover sheet project directory missing: {field}"
+    validation_examples:
+      - scenario: "Cover sheet G-001 with all required sections"
+        cover_sheet: {number: "G-001", sections: ["directory", "index", "symbols", "abbrev", "notes"]}
+        expected_result: PASS
+
+      - scenario: "No cover sheet in drawing set"
+        cover_sheet: null
+        expected_result: FAIL
+
+      - scenario: "Cover sheet missing abbreviations list"
+        cover_sheet: {sections: ["directory", "index", "symbols", "notes"]}
+        expected_result: FAIL
+
+  - id: QA-ORG-002
+    description: Validate general notes sheet completeness per discipline
+    severity: high
+    category: sheet_completeness
+    rationale: General notes (E-001, M-001, P-001, etc.) establish design criteria, specifications, and code compliance statements. Incomplete notes cause interpretation issues.
+    code_reference: Drawing_Type_Classification.md Section 7.2 - General Notes Standards
+    check:
+      type: custom
+      function: validate_general_notes_sheet
+      params:
+        discipline_field: document.discipline
+        notes_sheet_pattern: "{DISCIPLINE}-001"
+    validation_logic: |
+      FOR discipline IN ["E", "M", "P", "FP"]:
+        notes_sheet_number = f"{discipline}-001"
+        notes_sheet = FIND_SHEET(notes_sheet_number)
+
+        IF notes_sheet IS NULL:
+          FAIL: "{discipline} discipline missing general notes sheet ({notes_sheet_number})"
+          CONTINUE
+
+        # Validate required note categories
+        required_categories = [
+          "code_compliance",
+          "standards_specifications",
+          "abbreviations_symbols",
+          "submittal_requirements",
+          "testing_commissioning"
+        ]
+
+        FOR category IN required_categories:
+          IF NOT notes_sheet.has_note_category(category):
+            WARN: "{notes_sheet_number} missing note category: {category}"
+
+        # Check for code compliance statement
+        IF NOT notes_sheet.contains_text("comply with.*code"):
+          WARN: "{notes_sheet_number} should include code compliance statement"
+    validation_examples:
+      - scenario: "E-001 general notes with all required categories"
+        sheet: {number: "E-001", categories: ["code", "standards", "abbrev", "submittal", "testing"]}
+        expected_result: PASS
+
+      - scenario: "M-001 missing testing/commissioning notes"
+        sheet: {number: "M-001", categories: ["code", "standards", "abbrev", "submittal"]}
+        expected_result: WARN
+
+      - scenario: "Electrical discipline with no E-001 sheet"
+        discipline: "electrical", notes_sheet: null
+        expected_result: FAIL
+
+  - id: QA-ORG-003
+    description: Validate required drawing types present per project phase (SD/DD/CD)
+    severity: medium
+    category: sheet_completeness
+    rationale: Different project phases require different drawing types. CD phase must be complete per Drawing_Type_Classification.md Section 5.
+    code_reference: Drawing_Type_Classification.md Section 5 - Drawing Organization by Project Phase
+    check:
+      type: custom
+      function: validate_phase_completeness
+      params:
+        project_phase_field: project.phase
+        discipline_field: project.disciplines
+    validation_logic: |
+      # Drawing requirements by phase (Drawing_Type_Classification.md Section 5)
+      phase_requirements = {
+        "SD": ["site_plans", "single_line_floor_plans", "system_diagrams"],
+        "DD": ["floor_plans", "rcps", "diagrams", "preliminary_schedules", "key_details"],
+        "CD": ["floor_plans", "rcps", "diagrams", "details", "schedules", "all_notes"]
+      }
+
+      project_phase = project.phase
+      IF project_phase NOT IN phase_requirements:
+        WARN: "Unknown project phase '{project_phase}' - cannot validate completeness"
+        RETURN
+
+      required_drawings = phase_requirements[project_phase]
+
+      FOR discipline IN project.disciplines:
+        FOR drawing_type IN required_drawings:
+          sheets = FIND_SHEETS_BY_TYPE(discipline, drawing_type)
+
+          IF LENGTH(sheets) == 0:
+            IF project_phase == "CD":
+              FAIL: "{discipline} discipline missing required {drawing_type} for CD phase"
+            ELSE:
+              WARN: "{discipline} discipline missing typical {drawing_type} for {project_phase} phase"
+    validation_examples:
+      - scenario: "CD phase electrical with all required drawing types"
+        phase: "CD", discipline: "E", drawings: ["plans", "rcps", "diagrams", "details", "schedules"]
+        expected_result: PASS
+
+      - scenario: "CD phase mechanical missing details"
+        phase: "CD", discipline: "M", drawings: ["plans", "diagrams", "schedules"]
+        expected_result: FAIL
+
+      - scenario: "DD phase with floor plans and diagrams (no details yet)"
+        phase: "DD", discipline: "P", drawings: ["plans", "diagrams"]
+        expected_result: PASS
+
+  - id: QA-ORG-004
+    description: Validate sheet sequence follows standard numbering (plans → diagrams → details → schedules)
+    severity: medium
+    category: sheet_organization
+    rationale: Standard sheet sequence per Drawing_Type_Classification.md Section 4.2 enables intuitive navigation. Out-of-order sheets confuse users.
+    code_reference: Drawing_Type_Classification.md Section 4.2 - Series Numbering Convention
+    check:
+      type: custom
+      function: validate_sheet_sequence
+      params:
+        discipline_field: document.discipline
+        sheet_numbers_field: document.sheets
+    validation_logic: |
+      # Standard series ranges per Drawing_Type_Classification.md Section 4.2
+      series_order = {
+        "000-099": "General",
+        "100-199": "Plans 1",
+        "200-299": "Plans 2 (RCPs, Lighting)",
+        "300-399": "Plans 3",
+        "400-499": "Diagrams",
+        "500-599": "Details",
+        "600-699": "Schedules"
+      }
+
+      FOR discipline IN ["E", "M", "P", "FP"]:
+        discipline_sheets = FILTER_SHEETS(discipline=discipline)
+        sheet_numbers = [int(sheet.number.split('-')[1]) FOR sheet IN discipline_sheets]
+
+        # Check for out-of-sequence sheets
+        FOR i IN range(len(sheet_numbers) - 1):
+          current = sheet_numbers[i]
+          next = sheet_numbers[i+1]
+
+          # Verify sequence doesn't jump backwards more than one series
+          current_series = DETERMINE_SERIES(current)
+          next_series = DETERMINE_SERIES(next)
+
+          IF next_series < current_series - 100:
+            WARN: "{discipline} sheet sequence out of order: {current} followed by {next}"
+    validation_examples:
+      - scenario: "Electrical sheets in order: E-001, E-101, E-201, E-401, E-501"
+        sheets: [1, 101, 201, 401, 501]
+        expected_result: PASS
+
+      - scenario: "Mechanical sheets out of order: M-101, M-601, M-201 (schedules before remaining plans)"
+        sheets: [101, 601, 201]
+        expected_result: WARN
+
+      - scenario: "Plumbing sheets sequenced correctly with gaps: P-001, P-101, P-401, P-601"
+        sheets: [1, 101, 401, 601]
+        expected_result: PASS
+
+  - id: QA-ORG-005
+    description: Validate drawing index matches actual sheet numbers and titles
+    severity: high
+    category: sheet_completeness
+    rationale: Drawing index (on cover sheet) must accurately list all sheets. Index is primary navigation tool for contractors and reviewers.
+    code_reference: Drawing_Type_Classification.md Section 6.4 - Drawing Completeness Checklists
+    check:
+      type: cross_reference
+      reference_field: cover_sheet.drawing_index
+      target_field: document.sheets
+      condition: bidirectional_match
+    validation_logic: |
+      # Implementation delegated to QA-XR-014 in Cross-Sheet References
+      # This rule serves as reminder that index validation is critical
+      DEFER_TO: "QA-XR-014"
+    validation_examples:
+      - scenario: "All sheets listed in index and all index entries exist"
+        expected_result: PASS
+      - scenario: "Index missing sheet E-301"
+        expected_result: FAIL
+      - scenario: "Index lists sheet M-202 which doesn't exist"
+        expected_result: FAIL
+
+  - id: QA-ORG-006
+    description: Validate superseded sheets properly noted with previous revision reference
+    severity: low
+    category: revision_control
+    rationale: When sheets are superseded or deleted, documentation prevents use of outdated drawings. Helps track design evolution.
+    code_reference: Drawing_Type_Classification.md Section 10 - Drawing Revision and Change Management
+    check:
+      type: field_presence
+      fields:
+        - superseded_sheets.revision_history
+        - superseded_sheets.superseded_date
+      condition: not null
+    validation_logic: |
+      # Implementation delegated to QA-XR-015 in Cross-Sheet References
+      DEFER_TO: "QA-XR-015"
+    validation_examples:
+      - scenario: "Superseded sheet with revision history"
+        expected_result: PASS
+      - scenario: "Sheet marked 'VOID' with no documentation"
+        expected_result: WARN
+
+  - id: QA-ORG-007
+    description: Validate match lines between split plans properly aligned
+    severity: high
+    category: sheet_organization
+    rationale: Large plans split across multiple sheets require match lines at same grid line location. Misalignment prevents seamless navigation.
+    code_reference: Drawing_Type_Classification.md Section 6.4 - Sheet Completeness
+    check:
+      type: custom
+      function: validate_match_line_alignment
+    validation_logic: |
+      # Implementation delegated to QA-XR-007 in Cross-Sheet References
+      DEFER_TO: "QA-XR-007"
+    validation_examples:
+      - scenario: "Match lines at grid 10 on both adjacent sheets"
+        expected_result: PASS
+      - scenario: "Match line grid references don't align"
+        expected_result: FAIL
+
+  - id: QA-ORG-008
+    description: Validate north arrows consistent orientation across all plan sheets
+    severity: medium
+    category: sheet_organization
+    rationale: All plans must have north arrows pointing same direction to prevent orientation confusion during coordination meetings.
+    code_reference: Drawing_Type_Classification.md Section 9.1 - Plan Drawing Validation
+    check:
+      type: consistency
+      field: plans.north_arrow.angle
+      scope: all_plan_sheets
+      condition: identical_angle
+    validation_logic: |
+      # Implementation delegated to QA-XR-013 in Cross-Sheet References
+      DEFER_TO: "QA-XR-013"
+    validation_examples:
+      - scenario: "All plan sheets with north arrow at 90°"
+        expected_result: PASS
+      - scenario: "North arrow rotated 180° on one sheet"
+        expected_result: FAIL
+
+  - id: QA-ORG-009
+    description: Validate scale notation consistent format across sheets
+    severity: medium
+    category: sheet_completeness
+    rationale: Scale notation must follow standard format (1/4\"=1'-0\" or 1:100) to prevent misinterpretation. Mixed formats cause confusion.
+    code_reference: Drawing_Type_Classification.md Section 7.1 - Title Block Requirements
+    check:
+      type: field_format
+      field: title_block.scale
+      patterns:
+        - '^\\d+/\\d+"?=\\d+\'-\\d+"$'   # Architectural: 1/4"=1'-0"
+        - '^\\d+:\\d+$'                   # Engineering: 1:100
+        - '^NTS$'                         # Not To Scale
+        - '^AS NOTED$'                    # As Noted
+      description: "Scale format must be standardized"
+    validation_logic: |
+      FOR sheet IN document.sheets:
+        scale = sheet.title_block.scale
+
+        # Check format validity
+        IF NOT MATCHES_SCALE_PATTERN(scale):
+          FAIL: "Sheet {sheet.number} scale '{scale}' does not match standard format"
+
+        # Check consistency within drawing type
+        drawing_type = sheet.drawing_type
+        IF drawing_type == "plan":
+          # Plans typically use architectural scale
+          IF NOT MATCHES_PATTERN(scale, "^\\d+/\\d+\"=\\d+'-\\d+\"$"):
+            WARN: "Plan sheet {sheet.number} using non-architectural scale '{scale}'"
+    validation_examples:
+      - scenario: "All plan sheets use architectural scale (1/8\"=1'-0\")"
+        expected_result: PASS
+      - scenario: "Detail sheet using valid scale (1\"=1'-0\")"
+        expected_result: PASS
+      - scenario: "Sheet with invalid scale notation '1/8'=1-0'"
+        expected_result: FAIL
+
+  - id: QA-ORG-010
+    description: Validate legends and symbols present for all disciplines
+    severity: high
+    category: sheet_completeness
+    rationale: Each discipline must have symbol legend on general notes sheet or separate legend sheet. Missing legends prevent drawing interpretation.
+    code_reference: Drawing_Type_Classification.md Section 7.3 - Legend and Symbol Standards
+    check:
+      type: custom
+      function: validate_discipline_legend
+      params:
+        discipline_field: document.disciplines
+        legend_location: ["general_notes_sheet", "separate_legend_sheet"]
+    validation_logic: |
+      FOR discipline IN document.disciplines:
+        # Check for legend on general notes sheet (e.g., E-001)
+        notes_sheet = FIND_SHEET(f"{discipline}-001")
+
+        has_legend = FALSE
+        IF notes_sheet AND notes_sheet.has_symbols_legend:
+          has_legend = TRUE
+
+        # Or check for separate legend sheet
+        legend_sheet = FIND_SHEET(f"{discipline}-000") OR FIND_SHEET(f"{discipline}-001L")
+        IF legend_sheet AND legend_sheet.drawing_type == "legend":
+          has_legend = TRUE
+
+        IF NOT has_legend:
+          FAIL: "{discipline} discipline missing symbols/legend (should be on {discipline}-001 or separate sheet)"
+    validation_examples:
+      - scenario: "Electrical symbols on E-001 general notes"
+        discipline: "E", notes_sheet: {has_legend: true}
+        expected_result: PASS
+
+      - scenario: "Mechanical discipline with no legend"
+        discipline: "M", notes_sheet: {has_legend: false}
+        expected_result: FAIL
+
+      - scenario: "Plumbing with separate legend sheet P-000"
+        discipline: "P", legend_sheet: {number: "P-000", type: "legend"}
+        expected_result: PASS
+
+  - id: QA-ORG-011
+    description: Validate site plan present and includes required information
+    severity: high
+    category: sheet_completeness
+    rationale: Site plan shows building location, property lines, utilities, and site context. Required for permitting and construction planning.
+    code_reference: Drawing_Type_Classification.md Section 3.1.1 - Architectural Plans (Site Plan)
+    check:
+      type: custom
+      function: validate_site_plan
+      params:
+        site_plan_sheets: ["A-001", "C-001", "E-002", "M-002", "P-002"]
+        required_elements:
+          - building_footprint
+          - property_lines
+          - utility_connections
+          - north_arrow
+          - scale
+    validation_logic: |
+      # Look for site plan (typically A-001, C-001, or discipline-002)
+      site_plan_sheets = [
+        FIND_SHEET("A-001"), FIND_SHEET("C-001"),
+        FIND_SHEET("E-002"), FIND_SHEET("M-002"), FIND_SHEET("P-002")
+      ]
+
+      site_plan = FIRST_NON_NULL(site_plan_sheets)
+
+      IF site_plan IS NULL:
+        FAIL: "No site plan found (expected A-001, C-001, or {discipline}-002)"
+        RETURN
+
+      # Validate required elements
+      required_elements = [
+        "building_footprint", "property_lines", "utility_connections",
+        "north_arrow", "scale"
+      ]
+
+      FOR element IN required_elements:
+        IF NOT site_plan.has_element(element):
+          WARN: "Site plan {site_plan.number} missing: {element}"
+    validation_examples:
+      - scenario: "Site plan A-001 with all required elements"
+        site_plan: {number: "A-001", elements: ["footprint", "property", "utilities", "north", "scale"]}
+        expected_result: PASS
+
+      - scenario: "Site plan missing utility connections"
+        site_plan: {number: "C-001", elements: ["footprint", "property", "north", "scale"]}
+        expected_result: WARN
+
+      - scenario: "No site plan in drawing set"
+        site_plan: null
+        expected_result: FAIL
+
+  - id: QA-ORG-012
+    description: Validate one-line/riser diagrams present for vertical distribution systems
+    severity: high
+    category: sheet_completeness
+    rationale: Multi-story buildings require one-line/riser diagrams showing vertical distribution. Missing diagrams prevent understanding of system architecture.
+    code_reference: Drawing_Type_Classification.md Section 3.2.2 - Diagrams
+    check:
+      type: custom
+      function: validate_riser_diagrams
+      params:
+        building_stories_field: project.building_stories
+        diagram_sheets_range: "400-499"
+    validation_logic: |
+      IF project.building_stories > 1:
+        # Multi-story building requires riser/one-line diagrams
+
+        FOR discipline IN ["E", "M", "P", "FP"]:
+          diagram_sheets = FILTER_SHEETS(
+            discipline=discipline,
+            sheet_number_range=(400, 499)
+          )
+
+          IF LENGTH(diagram_sheets) == 0:
+            FAIL: "{discipline} discipline missing riser/one-line diagrams (multi-story building requires vertical distribution diagrams)"
+
+          # Verify diagram types appropriate for discipline
+          IF discipline == "E":
+            IF NOT ANY(sheet.drawing_type == "one_line_diagram" FOR sheet IN diagram_sheets):
+              WARN: "Electrical discipline should have one-line diagram"
+
+          IF discipline IN ["M", "P", "FP"]:
+            IF NOT ANY(sheet.drawing_type == "riser_diagram" FOR sheet IN diagram_sheets):
+              WARN: "{discipline} discipline should have riser diagram(s)"
+    validation_examples:
+      - scenario: "5-story building with E, M, P, FP riser diagrams"
+        stories: 5, disciplines: ["E", "M", "P", "FP"], riser_sheets: [4, 3, 2, 2]
+        expected_result: PASS
+
+      - scenario: "3-story building, mechanical discipline missing riser diagram"
+        stories: 3, discipline: "M", riser_sheets: 0
+        expected_result: FAIL
+
+      - scenario: "Single-story building (risers not required)"
+        stories: 1
+        expected_result: PASS
+
+  - id: QA-ORG-013
+    description: Validate detail sheet numbering follows convention (sheet.detail format)
+    severity: medium
+    category: sheet_organization
+    rationale: Details should be numbered by sheet and detail number (e.g., \"3/E-601\" = detail 3 on sheet E-601). Consistent numbering enables cross-referencing.
+    code_reference: Drawing_Type_Classification.md Section 2.3 - Details
+    check:
+      type: custom
+      function: validate_detail_numbering
+      params:
+        detail_sheets_range: "500-699"
+        numbering_format: "detail_number/sheet_number"
+    validation_logic: |
+      detail_sheets = FILTER_SHEETS(drawing_type="detail")
+
+      FOR sheet IN detail_sheets:
+        details = sheet.details
+
+        FOR detail IN details:
+          # Check numbering format (should be sequential on sheet)
+          IF detail.number NOT IN range(1, 20):
+            WARN: "Detail {detail.number} on {sheet.number} has unusual numbering (expected 1-20)"
+
+          # Check for duplicate detail numbers on same sheet
+          detail_numbers = [d.number FOR d IN details]
+          IF detail_numbers.count(detail.number) > 1:
+            FAIL: "Sheet {sheet.number} has duplicate detail number {detail.number}"
+    validation_examples:
+      - scenario: "Detail sheet E-601 with details numbered 1-6 sequentially"
+        sheet: {number: "E-601", details: [1, 2, 3, 4, 5, 6]}
+        expected_result: PASS
+
+      - scenario: "Detail sheet with duplicate detail number 3"
+        sheet: {number: "M-501", details: [1, 2, 3, 3, 4]}
+        expected_result: FAIL
+
+      - scenario: "Detail sheet with non-sequential numbering (1, 2, 5, 9)"
+        sheet: {number: "P-501", details: [1, 2, 5, 9]}
+        expected_result: PASS  # Non-sequential OK, just unusual
+
+  - id: QA-ORG-014
+    description: Validate schedule sheets present for all equipment/fixtures
+    severity: high
+    category: sheet_completeness
+    rationale: Equipment schedules document specifications for procurement and installation. Missing schedules cause RFIs and delays.
+    code_reference: Drawing_Type_Classification.md Section 2.4 - Schedules
+    check:
+      type: custom
+      function: validate_schedule_sheets
+      params:
+        schedule_sheets_range: "600-699"
+        required_schedules_by_discipline:
+          E: ["panel_schedule", "lighting_fixture_schedule", "equipment_schedule"]
+          M: ["equipment_schedule", "diffuser_grille_schedule"]
+          P: ["plumbing_fixture_schedule", "equipment_schedule"]
+          FP: ["sprinkler_head_schedule", "equipment_schedule"]
+    validation_logic: |
+      required_schedules = {
+        "E": ["panel_schedule", "lighting_fixture_schedule", "equipment_schedule"],
+        "M": ["equipment_schedule", "diffuser_grille_schedule"],
+        "P": ["plumbing_fixture_schedule", "equipment_schedule"],
+        "FP": ["sprinkler_head_schedule", "equipment_schedule"]
+      }
+
+      FOR discipline, schedules IN required_schedules:
+        discipline_sheets = FILTER_SHEETS(discipline=discipline)
+
+        FOR schedule_type IN schedules:
+          found_schedule = FALSE
+
+          FOR sheet IN discipline_sheets:
+            IF sheet.has_schedule_type(schedule_type):
+              found_schedule = TRUE
+              BREAK
+
+          IF NOT found_schedule:
+            FAIL: "{discipline} discipline missing {schedule_type} (expected in 600-699 series)"
+    validation_examples:
+      - scenario: "Electrical with all required schedules (panels, fixtures, equipment)"
+        discipline: "E", schedules: ["panel", "fixture", "equipment"]
+        expected_result: PASS
+
+      - scenario: "Mechanical missing diffuser/grille schedule"
+        discipline: "M", schedules: ["equipment"]
+        expected_result: FAIL
+
+      - scenario: "Plumbing with fixture and equipment schedules"
+        discipline: "P", schedules: ["fixture", "equipment"]
+        expected_result: PASS
+
+  - id: QA-ORG-015
+    description: Validate enlarged plan sheets reference source plans
+    severity: medium
+    category: sheet_organization
+    rationale: Enlarged plans (e.g., E-101.1) must clearly reference source plan (E-101). Enables navigation between overview and detail views.
+    code_reference: Drawing_Type_Classification.md Section 3.1.1 - Enlarged Floor Plans
+    check:
+      type: cross_reference
+      reference_field: enlarged_plans.source_plan
+      target_field: plans.enlargement_boundaries
+      condition: bidirectional_match
+    validation_logic: |
+      # Implementation delegated to QA-XR-008 in Cross-Sheet References
+      DEFER_TO: "QA-XR-008"
+    validation_examples:
+      - scenario: "E-101.1 references E-101, E-101 shows enlargement boundary"
+        expected_result: PASS
+      - scenario: "M-101.2 claims source M-101 but no boundary shown"
+        expected_result: FAIL
+
+  - id: QA-ORG-016
+    description: Validate revision tracking completeness (revision log in title block)
+    severity: high
+    category: revision_control
+    rationale: All revisions must be documented with date and description. Revision log maintains change history for liability and coordination.
+    code_reference: Drawing_Type_Classification.md Section 10.2 - Revision Log Format
+    check:
+      type: custom
+      function: validate_revision_log
+      params:
+        title_block_field: sheet.title_block
+        revision_log_field: title_block.revision_log
+    validation_logic: |
+      FOR sheet IN document.sheets:
+        current_revision = sheet.title_block.revision
+
+        IF current_revision IS NULL OR current_revision == "-":
+          CONTINUE  # Original issue, no revisions yet
+
+        # Check for revision log
+        IF sheet.title_block.revision_log IS NULL:
+          FAIL: "Sheet {sheet.number} is revision {current_revision} but has no revision log"
+          CONTINUE
+
+        revision_log = sheet.title_block.revision_log
+
+        # Verify current revision in log
+        IF current_revision NOT IN [entry.revision FOR entry IN revision_log]:
+          FAIL: "Sheet {sheet.number} current revision {current_revision} not in revision log"
+
+        # Check log completeness (date and description)
+        FOR entry IN revision_log:
+          IF entry.date IS NULL:
+            WARN: "Sheet {sheet.number} revision {entry.revision} missing date"
+          IF entry.description IS NULL OR entry.description == "":
+            WARN: "Sheet {sheet.number} revision {entry.revision} missing description"
+    validation_examples:
+      - scenario: "Sheet at revision B02 with complete revision log"
+        sheet: {revision: "B02", log: [{rev: "A01", date: "2024-01-15", desc: "Issued for permit"}, {rev: "B02", date: "2024-02-20", desc: "Revised panel location"}]}
+        expected_result: PASS
+
+      - scenario: "Sheet at revision A03 but revision log only shows A01, A02"
+        sheet: {revision: "A03", log: [{rev: "A01"}, {rev: "A02"}]}
+        expected_result: FAIL
+
+      - scenario: "Revision log entry missing description"
+        sheet: {log: [{rev: "A01", date: "2024-01-15", desc: null}]}
+        expected_result: WARN
+
+  - id: QA-ORG-017
+    description: Validate discipline designator consistency in sheet numbering
+    severity: high
+    category: sheet_organization
+    rationale: All sheets for a discipline must use same prefix (E, M, P, FP, etc.). Mixed or incorrect prefixes prevent proper sheet sorting and organization.
+    code_reference: Drawing_Type_Classification.md Section 4.3 - Discipline Prefixes
+    check:
+      type: consistency
+      field: sheet_number.discipline_prefix
+      scope: all_sheets_in_discipline
+      condition: identical
+    validation_logic: |
+      # Standard discipline prefixes per Drawing_Type_Classification.md Section 4.3
+      standard_prefixes = {
+        "A": "Architecture",
+        "S": "Structural",
+        "C": "Civil",
+        "E": "Electrical",
+        "M": "Mechanical",
+        "P": "Plumbing",
+        "FP": "Fire Protection",
+        "L": "Landscape"
+      }
+
+      FOR sheet IN document.sheets:
+        prefix = sheet.number.split('-')[0]
+
+        IF prefix NOT IN standard_prefixes:
+          WARN: "Sheet {sheet.number} uses non-standard discipline prefix '{prefix}'"
+
+        # Check consistency within discipline group
+        discipline = sheet.discipline_metadata
+        expected_prefix = DISCIPLINE_TO_PREFIX(discipline)
+
+        IF prefix != expected_prefix:
+          FAIL: "Sheet {sheet.number} prefix '{prefix}' doesn't match discipline '{discipline}' (expected '{expected_prefix}')"
+    validation_examples:
+      - scenario: "All electrical sheets use 'E' prefix"
+        sheets: ["E-001", "E-101", "E-201", "E-401"]
+        expected_result: PASS
+
+      - scenario: "Electrical sheet using 'ELEC' prefix (non-standard)"
+        sheet: {number: "ELEC-101", discipline: "electrical"}
+        expected_result: WARN
+
+      - scenario: "Mechanical sheet numbered 'E-301' (wrong prefix)"
+        sheet: {number: "E-301", discipline: "mechanical"}
+        expected_result: FAIL
+
+  - id: QA-ORG-018
+    description: Validate CAD layer naming conventions followed
+    severity: low
+    category: sheet_organization
+    rationale: Standard CAD layer naming (AIA CAD standard) enables proper display, filtering, and coordination. Non-standard layers cause issues in BIM workflows.
+    code_reference: AIA CAD Layer Guidelines, ISO 19650
+    check:
+      type: custom
+      function: validate_cad_layer_naming
+      params:
+        layer_naming_standard: "AIA_CAD_Standard"
+        layer_format: "{discipline}-{major_group}-{minor_group}"
+    validation_logic: |
+      # This rule applies if CAD layer information available in JSON
+      IF document.cad_layers IS NULL:
+        SKIP: "CAD layer information not available in extracted data"
+        RETURN
+
+      # AIA CAD Layer naming: {discipline}-{major}-{minor}
+      # Example: A-WALL-FULL, E-POWR-CIRC, M-HVAC-DUCT
+
+      FOR layer IN document.cad_layers:
+        layer_name = layer.name
+
+        # Check format compliance
+        IF NOT MATCHES_PATTERN(layer_name, "^[A-Z]-[A-Z]{4}-[A-Z]{4}$"):
+          WARN: "CAD layer '{layer_name}' doesn't follow AIA naming convention (discipline-major-minor)"
+
+        # Check discipline prefix matches sheet discipline
+        layer_discipline = layer_name.split('-')[0]
+        IF layer_discipline != document.discipline:
+          WARN: "CAD layer '{layer_name}' discipline '{layer_discipline}' doesn't match sheet discipline"
+    validation_examples:
+      - scenario: "CAD layers follow AIA standard: E-POWR-CIRC, E-LITE-FIXT"
+        layers: ["E-POWR-CIRC", "E-LITE-FIXT", "E-ANNO-NOTE"]
+        expected_result: PASS
+
+      - scenario: "CAD layer with non-standard naming: Electrical-Power"
+        layers: ["Electrical-Power"]
+        expected_result: WARN
+
+      - scenario: "No CAD layer information in extracted data"
+        cad_layers: null
+        expected_result: SKIP
+
+  - id: QA-ORG-019
+    description: Validate keynote system consistency across sheets
+    severity: medium
+    category: sheet_organization
+    rationale: If keynote system used, keynote format must be consistent (e.g., CSI MasterFormat section numbers). Mixed formats confuse users.
+    code_reference: CSI MasterFormat, keynote standards
+    check:
+      type: custom
+      function: validate_keynote_system
+      params:
+        keynote_format: "CSI_MasterFormat"
+        keynote_pattern: '^\d{2}-\d{4}$'  # e.g., 26-0513
+    validation_logic: |
+      # Check if keynotes are used
+      keynotes_found = []
+      FOR sheet IN document.sheets:
+        IF sheet.keynotes:
+          keynotes_found.extend(sheet.keynotes)
+
+      IF LENGTH(keynotes_found) == 0:
+        SKIP: "No keynotes found in drawing set"
+        RETURN
+
+      # Validate format consistency
+      FOR keynote IN keynotes_found:
+        IF NOT MATCHES_PATTERN(keynote.number, "^\d{2}-\d{4}$"):
+          WARN: "Keynote '{keynote.number}' doesn't match CSI MasterFormat format (##-####)"
+
+      # Check for keynote legend
+      keynote_legend_found = FALSE
+      FOR sheet IN document.sheets:
+        IF sheet.has_keynote_legend:
+          keynote_legend_found = TRUE
+          BREAK
+
+      IF NOT keynote_legend_found:
+        WARN: "Keynotes used but no keynote legend found in drawing set"
+    validation_examples:
+      - scenario: "Keynotes follow CSI format: 26-0513, 26-2413, 26-2713"
+        keynotes: ["26-0513", "26-2413", "26-2713"], legend: true
+        expected_result: PASS
+
+      - scenario: "Mixed keynote formats: 26-0513, E-4, Note A"
+        keynotes: ["26-0513", "E-4", "Note A"]
+        expected_result: WARN
+
+      - scenario: "No keynotes used in drawing set"
+        keynotes: []
+        expected_result: SKIP
+
+  - id: QA-ORG-020
+    description: Validate project phase stamp on all sheets matches cover sheet
+    severity: medium
+    category: sheet_completeness
+    rationale: All sheets must be stamped with correct project phase (SD, DD, CD, For Permit, etc.). Inconsistent stamps cause confusion about drawing status.
+    code_reference: Drawing_Type_Classification.md Section 10.3 - Revision Stages
+    check:
+      type: consistency
+      field: title_block.project_phase
+      scope: all_sheets
+      condition: identical
+    validation_logic: |
+      # Get phase from cover sheet
+      cover_sheet = FIND_SHEET("G-001") OR document.sheets[0]
+      cover_phase = cover_sheet.title_block.project_phase
+
+      IF cover_phase IS NULL:
+        WARN: "Cover sheet missing project phase stamp"
+        RETURN
+
+      # Check consistency across all sheets
+      FOR sheet IN document.sheets:
+        sheet_phase = sheet.title_block.project_phase
+
+        IF sheet_phase IS NULL:
+          FAIL: "Sheet {sheet.number} missing project phase stamp"
+
+        IF sheet_phase != cover_phase:
+          FAIL: "Sheet {sheet.number} phase stamp '{sheet_phase}' doesn't match cover sheet '{cover_phase}'"
+    validation_examples:
+      - scenario: "All sheets stamped 'FOR PERMIT'"
+        cover_phase: "FOR PERMIT", all_sheets_match: true
+        expected_result: PASS
+
+      - scenario: "Most sheets 'FOR CONSTRUCTION', one sheet 'DESIGN DEVELOPMENT'"
+        cover_phase: "FOR CONSTRUCTION", sheet_E-301: "DESIGN DEVELOPMENT"
+        expected_result: FAIL
+
+      - scenario: "Cover sheet missing phase stamp"
+        cover_phase: null
+        expected_result: WARN
+
+# Integration with Drawing_Type_Classification.md
+
+drawing_type_integration:
+  reference_document: "Drawing_Type_Classification.md"
+  sections:
+    - section: "Section 4.2 - Series Numbering Convention"
+      rules: ["QA-ORG-004"]
+    - section: "Section 5 - Drawing Organization by Project Phase"
+      rules: ["QA-ORG-003"]
+    - section: "Section 6 - Drawing Completeness Checklists"
+      rules: ["QA-ORG-001", "QA-ORG-002", "QA-ORG-011", "QA-ORG-012", "QA-ORG-014"]
+    - section: "Section 7 - Drawing Content Standards"
+      rules: ["QA-ORG-009", "QA-ORG-010"]
+    - section: "Section 10 - Drawing Revision and Change Management"
+      rules: ["QA-ORG-006", "QA-ORG-016", "QA-ORG-020"]
+
+# Version History
+version_history:
+  - version: 1.0.0
+    date: 2025-01-22
+    author: Document Control Specialist (Agent 5)
+    changes: Initial creation with 20 drawing set completeness and organization validation rules

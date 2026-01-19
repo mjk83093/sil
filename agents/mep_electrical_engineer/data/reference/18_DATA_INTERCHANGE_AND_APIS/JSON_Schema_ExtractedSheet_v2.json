@@ -1,0 +1,1059 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://engineering-drawing-qaqc.schema/extracted-sheet-v2.0.json",
+  "title": "Extracted Engineering Drawing Data Schema",
+  "description": "JSON Schema v2.0 for extracted engineering drawing data. Defines structure for title blocks, legends, symbols, notes, and schedules. Integrates with engineering-drawing-qaqc skill for automated QA/QC validation. Supports electrical, mechanical, plumbing, and fire protection disciplines.",
+  "version": "2.0.0",
+  "type": "object",
+  "required": ["document", "sheets"],
+  "properties": {
+    "document": {
+      "type": "object",
+      "description": "Document-level metadata applicable to entire drawing set",
+      "required": ["project_id", "project_name", "total_sheets", "discipline"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "description": "Unique project identifier",
+          "pattern": "^[A-Z0-9-]{3,50}$",
+          "examples": ["2024-HQ-UPGRADE", "PRJ-2024-001"]
+        },
+        "project_name": {
+          "type": "string",
+          "description": "Full project name",
+          "minLength": 3,
+          "maxLength": 200,
+          "examples": ["Main HQ Electrical Upgrade", "Office Tower Renovation"]
+        },
+        "total_sheets": {
+          "type": "integer",
+          "description": "Total number of sheets in drawing set",
+          "minimum": 1,
+          "maximum": 9999
+        },
+        "discipline": {
+          "type": "string",
+          "description": "Primary engineering discipline",
+          "enum": [
+            "Electrical",
+            "Mechanical",
+            "Plumbing",
+            "Fire Protection",
+            "Architectural",
+            "Structural",
+            "Civil",
+            "Landscape"
+          ]
+        },
+        "issue_date": {
+          "type": "string",
+          "description": "Drawing set issue date (ISO 8601 format)",
+          "format": "date",
+          "examples": ["2024-01-15"]
+        },
+        "client": {
+          "type": "string",
+          "description": "Client or owner name",
+          "examples": ["ABC Corporation", "City of Springfield"]
+        },
+        "contractor": {
+          "type": "string",
+          "description": "General contractor name",
+          "examples": ["XYZ Construction"]
+        },
+        "architect_engineer": {
+          "type": "string",
+          "description": "Design firm name",
+          "examples": ["Smith & Associates Engineers"]
+        },
+        "nec_version": {
+          "type": "string",
+          "description": "Applicable National Electrical Code version (electrical drawings only)",
+          "pattern": "^NEC (2017|2020|2023|2026)$",
+          "examples": ["NEC 2023"]
+        },
+        "building_code": {
+          "type": "string",
+          "description": "Applicable building code",
+          "examples": ["IBC 2021", "NFPA 101-2021"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "sheets": {
+      "type": "array",
+      "description": "Array of individual sheet data",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["sheet", "page", "title_block"],
+        "properties": {
+          "sheet": {
+            "type": "string",
+            "description": "Sheet number (discipline prefix + number)",
+            "pattern": "^[A-Z]{1,3}-[0-9]{3,4}[A-Z]?$",
+            "examples": ["E-301", "M-401", "P-201", "FP-101"]
+          },
+          "page": {
+            "type": "integer",
+            "description": "Sequential page number in set",
+            "minimum": 1
+          },
+          "title_block": {
+            "$ref": "#/definitions/TitleBlock"
+          },
+          "legend": {
+            "$ref": "#/definitions/Legend"
+          },
+          "symbols": {
+            "$ref": "#/definitions/Symbols"
+          },
+          "notes": {
+            "$ref": "#/definitions/Notes"
+          },
+          "schedules": {
+            "$ref": "#/definitions/Schedules"
+          },
+          "equipment": {
+            "type": "array",
+            "description": "V2.0: Major equipment with detailed properties",
+            "items": {
+              "$ref": "#/definitions/Equipment"
+            }
+          },
+          "code_compliance": {
+            "$ref": "#/definitions/CodeCompliance"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "definitions": {
+    "TitleBlock": {
+      "type": "object",
+      "description": "Title block information from drawing border",
+      "required": [
+        "project",
+        "sheet_title",
+        "scale",
+        "revision",
+        "date",
+        "discipline",
+        "sheet_number"
+      ],
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "Project name as shown on sheet",
+          "minLength": 3,
+          "maxLength": 200
+        },
+        "project_number": {
+          "type": "string",
+          "description": "Project number or identifier",
+          "pattern": "^[A-Z0-9-]{3,50}$"
+        },
+        "sheet_title": {
+          "type": "string",
+          "description": "Specific title for this sheet",
+          "minLength": 3,
+          "maxLength": 200,
+          "examples": [
+            "Ground Floor Power Plan",
+            "Second Floor HVAC Plan",
+            "Panel Schedules"
+          ]
+        },
+        "scale": {
+          "type": "string",
+          "description": "Drawing scale notation",
+          "pattern": "^(1/[0-9]{1,3}\"=[0-9]'-[0-9]\"|NTS|As Noted|Varies)$",
+          "examples": ["1/8\"=1'-0\"", "1/4\"=1'-0\"", "NTS"]
+        },
+        "revision": {
+          "type": "string",
+          "description": "Current revision code",
+          "pattern": "^[A-Z][0-9]{2,3}$",
+          "examples": ["A01", "A02", "B03"]
+        },
+        "date": {
+          "type": "string",
+          "description": "Sheet issue or revision date",
+          "format": "date",
+          "examples": ["2024-01-15"]
+        },
+        "drawn_by": {
+          "type": "string",
+          "description": "Drafter initials or name",
+          "pattern": "^[A-Z]{2,5}$",
+          "examples": ["JKL", "MNO"]
+        },
+        "checked_by": {
+          "type": "string",
+          "description": "Checker initials or name",
+          "pattern": "^[A-Z]{2,5}$",
+          "examples": ["ABC", "DEF"]
+        },
+        "approved_by": {
+          "type": "string",
+          "description": "Professional engineer seal name",
+          "examples": ["John Smith, PE"]
+        },
+        "pe_license": {
+          "type": "string",
+          "description": "Professional engineer license number",
+          "pattern": "^[A-Z]{2,3}-[0-9]{4,6}$",
+          "examples": ["CA-12345", "TX-098765"]
+        },
+        "discipline": {
+          "type": "string",
+          "description": "Sheet discipline code",
+          "enum": [
+            "Electrical",
+            "Mechanical",
+            "Plumbing",
+            "Fire Protection",
+            "Architectural",
+            "Structural"
+          ]
+        },
+        "sheet_number": {
+          "type": "string",
+          "description": "Sheet identifier (should match sheet field)",
+          "pattern": "^[A-Z]{1,3}-[0-9]{3,4}[A-Z]?$"
+        },
+        "phase": {
+          "type": "string",
+          "description": "Project phase designation",
+          "enum": [
+            "Schematic Design",
+            "Design Development",
+            "Construction Documents",
+            "Issued for Construction",
+            "As-Built"
+          ]
+        },
+        "authorization_code": {
+          "type": "string",
+          "description": "ISO 19650 authorization code (A1-A7) for published drawings",
+          "pattern": "^A[1-7]$",
+          "examples": ["A7", "A1"]
+        }
+      },
+      "additionalProperties": true
+    },
+    "Legend": {
+      "type": "array",
+      "description": "Symbol legend entries",
+      "items": {
+        "type": "object",
+        "required": ["symbol_id", "description", "type"],
+        "properties": {
+          "symbol_id": {
+            "type": "string",
+            "description": "Unique symbol tag or identifier",
+            "pattern": "^[A-Z0-9]{1,6}(-[0-9]{1,2})?$",
+            "examples": ["D1", "R1", "SD1", "WC-1"]
+          },
+          "description": {
+            "type": "string",
+            "description": "Full symbol description",
+            "minLength": 5,
+            "maxLength": 300,
+            "examples": [
+              "2x2 LED Troffer, 3500K, 3500 lumens",
+              "Duplex Receptacle, 120V, 20A"
+            ]
+          },
+          "type": {
+            "type": "string",
+            "description": "Symbol classification",
+            "enum": [
+              "lighting_fixture",
+              "receptacle",
+              "switch",
+              "panel",
+              "equipment",
+              "diffuser",
+              "return_grille",
+              "exhaust_fan",
+              "plumbing_fixture",
+              "valve",
+              "sprinkler_head",
+              "fire_alarm_device",
+              "door",
+              "window"
+            ]
+          },
+          "manufacturer": {
+            "type": "string",
+            "description": "V2.0: Equipment manufacturer",
+            "examples": ["Square D", "Lithonia", "Price Pfister"]
+          },
+          "model": {
+            "type": "string",
+            "description": "V2.0: Manufacturer model number",
+            "examples": ["NQOD430M100", "2GT8-4-32-A12-MVOLT-GEB10IS"]
+          },
+          "voltage": {
+            "type": "number",
+            "description": "V2.0: Operating voltage (electrical devices)",
+            "minimum": 12,
+            "maximum": 600,
+            "examples": [120, 208, 277, 480]
+          },
+          "wattage": {
+            "type": "number",
+            "description": "V2.0: Power consumption (watts)",
+            "minimum": 0,
+            "examples": [35, 100, 1500]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "Symbols": {
+      "type": "array",
+      "description": "Symbol instances placed on drawing",
+      "items": {
+        "type": "object",
+        "required": ["class", "tag", "location"],
+        "properties": {
+          "class": {
+            "type": "string",
+            "description": "Symbol class (should match legend type)",
+            "enum": [
+              "lighting_fixture",
+              "receptacle",
+              "switch",
+              "panel",
+              "equipment",
+              "diffuser",
+              "return_grille",
+              "exhaust_fan",
+              "plumbing_fixture",
+              "valve",
+              "sprinkler_head",
+              "fire_alarm_device"
+            ]
+          },
+          "tag": {
+            "type": "string",
+            "description": "Symbol tag (must exist in legend)",
+            "pattern": "^[A-Z0-9]{1,6}(-[0-9]{1,2})?$"
+          },
+          "location": {
+            "type": "object",
+            "description": "X-Y coordinates on drawing (sheet units)",
+            "required": ["x", "y"],
+            "properties": {
+              "x": {
+                "type": "number",
+                "description": "X coordinate (inches or mm from origin)"
+              },
+              "y": {
+                "type": "number",
+                "description": "Y coordinate (inches or mm from origin)"
+              }
+            }
+          },
+          "circuit": {
+            "type": "string",
+            "description": "Circuit identifier (electrical symbols)",
+            "pattern": "^[A-Z][0-9]{1,2}$",
+            "examples": ["A1", "B2", "C10"]
+          },
+          "zone": {
+            "type": "string",
+            "description": "HVAC zone identifier (mechanical symbols)",
+            "pattern": "^Zone-[0-9]{1,2}[A-Z]?$",
+            "examples": ["Zone-1A", "Zone-2"]
+          },
+          "room": {
+            "type": "string",
+            "description": "Room number or identifier",
+            "pattern": "^[0-9]{3,4}[A-Z]?$",
+            "examples": ["101", "201A"]
+          },
+          "height_aff": {
+            "type": "string",
+            "description": "Mounting height above finished floor",
+            "pattern": "^[0-9]{1,3}(\\.5)?\"$",
+            "examples": ["18\"", "48\"", "96\""]
+          },
+          "quantity": {
+            "type": "integer",
+            "description": "Number of devices at this location",
+            "minimum": 1,
+            "default": 1
+          },
+          "cfm": {
+            "type": "number",
+            "description": "Airflow rate in CFM (HVAC devices)",
+            "minimum": 0,
+            "examples": [400, 800, 1200]
+          },
+          "gpm": {
+            "type": "number",
+            "description": "Flow rate in GPM (plumbing devices)",
+            "minimum": 0,
+            "examples": [2.5, 5.0, 15.0]
+          },
+          "temperature_rating": {
+            "type": "string",
+            "description": "V2.0: Temperature rating (fire sprinklers)",
+            "pattern": "^[0-9]{3}°F$",
+            "examples": ["155°F", "165°F", "212°F"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "Notes": {
+      "type": "object",
+      "description": "Sheet notes and references",
+      "properties": {
+        "general": {
+          "type": "array",
+          "description": "General notes on sheet",
+          "items": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 500
+          },
+          "examples": [
+            [
+              "All wiring to be installed per NEC 2023",
+              "Coordinate fixture locations with reflected ceiling plan"
+            ]
+          ]
+        },
+        "referenced_sheets": {
+          "type": "array",
+          "description": "Cross-references to other sheets",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]{1,3}-[0-9]{3,4}[A-Z]?$"
+          },
+          "examples": [["E-001", "E-100", "A-301"]]
+        },
+        "detail_references": {
+          "type": "array",
+          "description": "V2.0: References to detail sheets",
+          "items": {
+            "type": "object",
+            "required": ["detail_number", "sheet"],
+            "properties": {
+              "detail_number": {
+                "type": "string",
+                "pattern": "^[0-9]{1,2}$"
+              },
+              "sheet": {
+                "type": "string",
+                "pattern": "^[A-Z]{1,3}-[0-9]{3,4}$"
+              },
+              "description": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "special_conditions": {
+          "type": "array",
+          "description": "Special project conditions or requirements",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "Schedules": {
+      "type": "object",
+      "description": "Equipment and system schedules",
+      "properties": {
+        "panel_schedule": {
+          "$ref": "#/definitions/PanelSchedule"
+        },
+        "lighting_fixture_schedule": {
+          "type": "array",
+          "description": "Lighting fixture schedule",
+          "items": {
+            "$ref": "#/definitions/LightingFixture"
+          }
+        },
+        "diffuser_schedule": {
+          "type": "array",
+          "description": "HVAC diffuser schedule",
+          "items": {
+            "$ref": "#/definitions/Diffuser"
+          }
+        },
+        "plumbing_fixture_schedule": {
+          "type": "array",
+          "description": "Plumbing fixture schedule",
+          "items": {
+            "$ref": "#/definitions/PlumbingFixture"
+          }
+        },
+        "sprinkler_schedule": {
+          "type": "array",
+          "description": "V2.0: Fire sprinkler head schedule",
+          "items": {
+            "$ref": "#/definitions/SprinklerHead"
+          }
+        },
+        "equipment_schedule": {
+          "type": "array",
+          "description": "V2.0: Major equipment schedule (chillers, boilers, pumps, etc.)",
+          "items": {
+            "$ref": "#/definitions/Equipment"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "PanelSchedule": {
+      "type": "object",
+      "description": "Electrical panel schedule",
+      "required": [
+        "panel_id",
+        "voltage",
+        "phases",
+        "main_breaker",
+        "circuits"
+      ],
+      "properties": {
+        "panel_id": {
+          "type": "string",
+          "description": "Panel identifier",
+          "pattern": "^[A-Z]{1,3}-[0-9]{1,2}$",
+          "examples": ["LP-1", "PP-2", "DP-3"]
+        },
+        "location": {
+          "type": "string",
+          "description": "Panel physical location",
+          "examples": ["Electrical Room 101", "Second Floor Closet"]
+        },
+        "voltage": {
+          "oneOf": [
+            {
+              "type": "number",
+              "description": "Single voltage (120V or 277V systems)",
+              "enum": [120, 208, 240, 277, 480]
+            },
+            {
+              "type": "string",
+              "description": "Combined voltage notation (three-phase)",
+              "pattern": "^[0-9]{3}/[0-9]{3}$",
+              "examples": ["120/208", "277/480"]
+            }
+          ]
+        },
+        "phases": {
+          "type": "integer",
+          "description": "Number of phases",
+          "enum": [1, 3]
+        },
+        "wires": {
+          "type": "integer",
+          "description": "Number of wires (3-wire or 4-wire)",
+          "enum": [3, 4],
+          "default": 4
+        },
+        "main_breaker": {
+          "type": "string",
+          "description": "Main breaker rating",
+          "pattern": "^[0-9]{2,4}A$",
+          "examples": ["100A", "225A", "400A"]
+        },
+        "bus_rating": {
+          "type": "string",
+          "description": "V2.0: Bus ampacity rating",
+          "pattern": "^[0-9]{2,4}A$"
+        },
+        "short_circuit_rating": {
+          "type": "integer",
+          "description": "V2.0: Short-circuit interrupting capacity (AIC)",
+          "minimum": 5000,
+          "maximum": 200000,
+          "examples": [10000, 22000, 65000]
+        },
+        "manufacturer": {
+          "type": "string",
+          "description": "V2.0: Panel manufacturer",
+          "examples": ["Square D", "Eaton", "Siemens"]
+        },
+        "model": {
+          "type": "string",
+          "description": "V2.0: Panel model number",
+          "examples": ["NQOD430M100", "PRL1A"]
+        },
+        "enclosure_type": {
+          "type": "string",
+          "description": "V2.0: NEMA enclosure type",
+          "pattern": "^NEMA [1-9]X?R?$",
+          "examples": ["NEMA 1", "NEMA 3R", "NEMA 4X"]
+        },
+        "circuits": {
+          "type": "array",
+          "description": "Individual circuit breakers",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/Circuit"
+          }
+        },
+        "total_connected_load": {
+          "type": "number",
+          "description": "Total connected load (VA)",
+          "minimum": 0
+        },
+        "demand_load": {
+          "type": "number",
+          "description": "Calculated demand load (VA) per NEC Article 220",
+          "minimum": 0
+        },
+        "load_calculation_included": {
+          "type": "boolean",
+          "description": "Flag indicating if load calculation is present",
+          "default": false
+        },
+        "load_calculation_method": {
+          "type": "string",
+          "description": "V2.0: NEC load calculation method",
+          "enum": [
+            "NEC 220.40 Standard Method",
+            "NEC 220.82 Optional Method",
+            "NEC 220.84 Existing Dwelling",
+            "NEC 220 Part III Commercial"
+          ]
+        }
+      },
+      "additionalProperties": true
+    },
+    "Circuit": {
+      "type": "object",
+      "description": "Individual circuit breaker in panel",
+      "required": ["circuit_number", "description", "breaker", "poles"],
+      "properties": {
+        "circuit_number": {
+          "type": "string",
+          "description": "Circuit identifier (matches symbols on plan)",
+          "pattern": "^[A-Z][0-9]{1,2}$",
+          "examples": ["A1", "B2", "C10"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Circuit load description",
+          "minLength": 5,
+          "maxLength": 100,
+          "examples": ["Office Lighting - North", "Receptacles - South (GFCI)"]
+        },
+        "breaker": {
+          "type": "string",
+          "description": "Breaker size rating",
+          "pattern": "^[0-9]{1,3}A$",
+          "examples": ["15A", "20A", "30A"]
+        },
+        "poles": {
+          "type": "integer",
+          "description": "Number of poles (1, 2, or 3)",
+          "enum": [1, 2, 3]
+        },
+        "load_va": {
+          "type": "number",
+          "description": "Circuit load in volt-amperes",
+          "minimum": 0,
+          "examples": [1440, 1800, 3600]
+        },
+        "wire_size": {
+          "type": "string",
+          "description": "V2.0: Conductor size",
+          "pattern": "^([0-9]{1,3}|[0-9]/0) AWG$",
+          "examples": ["12 AWG", "10 AWG", "2/0 AWG"]
+        },
+        "conduit_size": {
+          "type": "string",
+          "description": "V2.0: Conduit size",
+          "pattern": "^[0-9]{1,2}(/[0-9])? inch (EMT|RMC|PVC|FMC)$",
+          "examples": ["3/4 inch EMT", "1 inch RMC"]
+        },
+        "continuous": {
+          "type": "boolean",
+          "description": "V2.0: Continuous load flag (3+ hours)",
+          "default": false
+        }
+      }
+    },
+    "LightingFixture": {
+      "type": "object",
+      "description": "V2.0: Lighting fixture schedule entry",
+      "required": ["tag", "type", "wattage", "voltage"],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "pattern": "^[A-Z0-9]{1,6}$"
+        },
+        "type": {
+          "type": "string",
+          "description": "Fixture type",
+          "examples": ["LED Troffer", "LED Downlight", "Wall Sconce"]
+        },
+        "wattage": {
+          "type": "number",
+          "minimum": 0
+        },
+        "voltage": {
+          "type": "integer",
+          "enum": [120, 208, 240, 277, 480]
+        },
+        "lumens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "color_temp": {
+          "type": "string",
+          "pattern": "^[0-9]{4}K$",
+          "examples": ["3000K", "3500K", "4000K"]
+        },
+        "manufacturer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "mounting": {
+          "type": "string",
+          "enum": ["Recessed", "Surface", "Pendant", "Wall"]
+        },
+        "control": {
+          "type": "string",
+          "examples": ["Dimming 0-10V", "On/Off", "Occupancy Sensor"]
+        }
+      }
+    },
+    "Diffuser": {
+      "type": "object",
+      "description": "HVAC diffuser schedule entry",
+      "required": ["tag", "type", "size", "cfm"],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "pattern": "^[A-Z]{2}[0-9]{1,3}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["Supply", "Return", "Exhaust"]
+        },
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,2}x[0-9]{1,2}$",
+          "examples": ["24x24", "12x12"]
+        },
+        "cfm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "throw": {
+          "type": "string",
+          "pattern": "^[0-9]{1,2} ft$",
+          "examples": ["10 ft", "15 ft"]
+        },
+        "neck_size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,2}\" (round|rectangular)$",
+          "examples": ["12\" round", "10\" round"]
+        },
+        "manufacturer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "PlumbingFixture": {
+      "type": "object",
+      "description": "V2.0: Plumbing fixture schedule entry",
+      "required": ["tag", "type"],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "pattern": "^[A-Z]{2,3}-[0-9]{1,2}$"
+        },
+        "type": {
+          "type": "string",
+          "examples": ["Water Closet", "Lavatory", "Sink", "Urinal", "Floor Drain"]
+        },
+        "manufacturer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "mounting": {
+          "type": "string",
+          "enum": ["Floor", "Wall", "Counter"]
+        },
+        "flush_volume": {
+          "type": "string",
+          "pattern": "^[0-9]\\.[0-9]{1,2} GPF$",
+          "examples": ["1.28 GPF", "1.6 GPF"]
+        },
+        "flow_rate": {
+          "type": "string",
+          "pattern": "^[0-9]\\.[0-9] GPM$",
+          "examples": ["2.2 GPM", "1.5 GPM"]
+        },
+        "drain_size": {
+          "type": "string",
+          "pattern": "^[0-9]{1,2} inch$",
+          "examples": ["2 inch", "3 inch", "4 inch"]
+        }
+      }
+    },
+    "SprinklerHead": {
+      "type": "object",
+      "description": "V2.0: Fire sprinkler head schedule",
+      "required": ["tag", "type", "temperature_rating", "k_factor"],
+      "properties": {
+        "tag": {
+          "type": "string",
+          "pattern": "^SH-[0-9]{1,3}$"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["Pendent", "Upright", "Sidewall", "Concealed"]
+        },
+        "temperature_rating": {
+          "type": "string",
+          "pattern": "^[0-9]{3}°F$",
+          "examples": ["155°F", "165°F", "212°F"]
+        },
+        "response_time": {
+          "type": "string",
+          "enum": ["Quick Response", "Standard Response", "Special Response"]
+        },
+        "k_factor": {
+          "type": "number",
+          "description": "Sprinkler K-factor",
+          "examples": [5.6, 8.0, 11.2]
+        },
+        "orifice_diameter": {
+          "type": "string",
+          "pattern": "^[0-9]\\.[0-9]{1,2} inch$"
+        },
+        "coverage_area": {
+          "type": "string",
+          "pattern": "^[0-9]{2,3} sq ft$",
+          "examples": ["130 sq ft", "225 sq ft"]
+        },
+        "finish": {
+          "type": "string",
+          "examples": ["Chrome", "White", "Brass"]
+        },
+        "manufacturer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "Equipment": {
+      "type": "object",
+      "description": "V2.0: Major equipment (chillers, boilers, pumps, air handlers, etc.)",
+      "required": ["equipment_id", "type", "manufacturer", "model"],
+      "properties": {
+        "equipment_id": {
+          "type": "string",
+          "description": "Equipment tag",
+          "pattern": "^[A-Z]{2,4}-[0-9]{1,2}$",
+          "examples": ["CH-1", "AHU-1", "P-1"]
+        },
+        "type": {
+          "type": "string",
+          "description": "Equipment type",
+          "examples": [
+            "Chiller",
+            "Boiler",
+            "Air Handler",
+            "Pump",
+            "Fan",
+            "Transformer",
+            "Generator"
+          ]
+        },
+        "manufacturer": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string",
+          "examples": ["Mechanical Room 101", "Rooftop"]
+        },
+        "capacity": {
+          "type": "string",
+          "description": "Equipment capacity with units",
+          "examples": ["500 tons", "2000 MBH", "10000 CFM"]
+        },
+        "power": {
+          "type": "string",
+          "pattern": "^[0-9]{1,4} (HP|kW)$",
+          "examples": ["15 HP", "125 kW"]
+        },
+        "voltage": {
+          "type": "string",
+          "pattern": "^[0-9]{3}(/[0-9]{3})?V$",
+          "examples": ["208V", "480V", "120/208V"]
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["1-phase", "3-phase"]
+        },
+        "fla": {
+          "type": "number",
+          "description": "Full load amps"
+        },
+        "mca": {
+          "type": "number",
+          "description": "Minimum circuit ampacity"
+        },
+        "mocp": {
+          "type": "string",
+          "description": "Maximum overcurrent protection",
+          "pattern": "^[0-9]{1,3}A$"
+        },
+        "efficiency": {
+          "type": "string",
+          "description": "Equipment efficiency rating",
+          "examples": ["92% AFUE", "EER 12.5", "0.58 kW/ton"]
+        },
+        "weight": {
+          "type": "string",
+          "pattern": "^[0-9]{2,5} lbs$"
+        },
+        "dimensions": {
+          "type": "string",
+          "pattern": "^[0-9]{1,3}\"W x [0-9]{1,3}\"D x [0-9]{1,3}\"H$"
+        },
+        "performance_data": {
+          "type": "object",
+          "description": "V2.0: Equipment performance curves and operating points",
+          "additionalProperties": true
+        }
+      }
+    },
+    "CodeCompliance": {
+      "type": "object",
+      "description": "V2.0: Code compliance flags and certifications",
+      "properties": {
+        "nec_compliant": {
+          "type": "boolean",
+          "description": "Meets NEC requirements (electrical)"
+        },
+        "nfpa_13_compliant": {
+          "type": "boolean",
+          "description": "Meets NFPA 13 requirements (fire protection)"
+        },
+        "energy_code_compliant": {
+          "type": "boolean",
+          "description": "Meets energy code (ASHRAE 90.1, Title 24, etc.)"
+        },
+        "accessibility_compliant": {
+          "type": "boolean",
+          "description": "Meets ADA/accessibility requirements"
+        },
+        "seismic_compliant": {
+          "type": "boolean",
+          "description": "Meets seismic bracing requirements"
+        },
+        "compliance_notes": {
+          "type": "array",
+          "description": "Specific compliance notes or exceptions",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "examples": [
+    {
+      "document": {
+        "project_id": "2024-HQ-UPGRADE",
+        "project_name": "Main HQ Electrical Upgrade",
+        "total_sheets": 12,
+        "discipline": "Electrical",
+        "issue_date": "2024-01-15",
+        "nec_version": "NEC 2023"
+      },
+      "sheets": [
+        {
+          "sheet": "E-301",
+          "page": 4,
+          "title_block": {
+            "project": "Main HQ Electrical Upgrade",
+            "sheet_title": "Ground Floor Power Plan",
+            "scale": "1/8\"=1'-0\"",
+            "revision": "A02",
+            "date": "2024-01-15",
+            "drawn_by": "JKL",
+            "checked_by": "MNO",
+            "discipline": "Electrical",
+            "sheet_number": "E-301",
+            "authorization_code": "A7"
+          },
+          "legend": [
+            {
+              "symbol_id": "D1",
+              "description": "2x2 LED Troffer, 3500K, 3500 lumens",
+              "type": "lighting_fixture",
+              "manufacturer": "Lithonia",
+              "wattage": 35
+            }
+          ],
+          "symbols": [
+            {
+              "class": "lighting_fixture",
+              "tag": "D1",
+              "location": {"x": 125, "y": 340},
+              "circuit": "A1",
+              "quantity": 1
+            }
+          ],
+          "schedules": {
+            "panel_schedule": {
+              "panel_id": "LP-1",
+              "voltage": "120/208",
+              "phases": 3,
+              "main_breaker": "100A",
+              "manufacturer": "Square D",
+              "model": "NQOD430M100",
+              "circuits": [
+                {
+                  "circuit_number": "A1",
+                  "description": "Office Lighting - North",
+                  "breaker": "20A",
+                  "poles": 1,
+                  "load_va": 1800
+                }
+              ],
+              "total_connected_load": 28500,
+              "demand_load": 21300,
+              "load_calculation_included": true,
+              "load_calculation_method": "NEC 220.82 Optional Method"
+            }
+          },
+          "code_compliance": {
+            "nec_compliant": true,
+            "energy_code_compliant": true
+          }
+        }
+      ]
+    }
+  ]
+}

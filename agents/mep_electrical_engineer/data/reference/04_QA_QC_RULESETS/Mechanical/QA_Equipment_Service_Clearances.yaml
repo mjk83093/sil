@@ -1,0 +1,439 @@
+# QA/QC Rule: Mechanical Equipment Service Clearances
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: Mechanical HVAC drawings with equipment layouts
+# Reference: IMC 2021 (International Mechanical Code), ASHRAE 62.1, manufacturer requirements
+
+rules:
+  - id: QA-401-MECH
+    description: Verify working space clearances meet IMC minimum access dimensions
+    severity: critical
+    category: compliance
+    rationale: IMC Section 304 requires minimum working space for equipment service and maintenance
+    code_reference: IMC 2021 Section 304
+    check:
+      type: custom
+      function: validate_working_space_clearances
+      params:
+        min_clearances:
+          front: 36  # inches
+          side: 24   # inches (if service required)
+          top: 30    # inches (for overhead equipment)
+        equipment_types_requiring_clearance:
+          - "air_handler"
+          - "furnace"
+          - "boiler"
+          - "chiller"
+          - "heat_pump"
+          - "condensing_unit"
+          - "fan_coil_unit"
+      logic: |
+        # Validate equipment has adequate working space clearances
+        equipment = get_field(plan.equipment)
+        clearance_violations = []
+
+        for equip in equipment:
+            if equip.equipment_type not in params.equipment_types_requiring_clearance:
+                continue
+
+            # Check front clearance
+            front_clearance = measure_clearance(equip, "front")
+            if front_clearance < params.min_clearances.front:
+                clearance_violations.append(f"{equip.tag}: Front clearance {front_clearance}\" < minimum {params.min_clearances.front}\" (IMC 304)")
+
+            # Check side clearance if service access required
+            if equip.requires_side_access:
+                side_clearance = measure_clearance(equip, "side")
+                if side_clearance < params.min_clearances.side:
+                    clearance_violations.append(f"{equip.tag}: Side clearance {side_clearance}\" < minimum {params.min_clearances.side}\"")
+
+            # Check top clearance for suspended equipment
+            if equip.mounting == "suspended" or equip.mounting == "ceiling":
+                top_clearance = measure_clearance(equip, "top")
+                if top_clearance < params.min_clearances.top:
+                    clearance_violations.append(f"{equip.tag}: Top clearance {top_clearance}\" < minimum {params.min_clearances.top}\"")
+
+        if clearance_violations:
+            return fail("\n".join(clearance_violations))
+
+        return pass()
+
+  - id: QA-402-MECH
+    description: Verify filter access clearances for air handling equipment
+    severity: critical
+    category: compliance
+    rationale: Filter maintenance requires adequate clearance to remove and replace filters (typically 1.5x filter length)
+    check:
+      type: custom
+      function: validate_filter_access
+      params:
+        equipment_with_filters:
+          - "air_handler"
+          - "fan_coil_unit"
+          - "rooftop_unit"
+          - "makeup_air_unit"
+        min_clearance_multiplier: 1.5  # 1.5x filter length
+      logic: |
+        # Check filter access clearances
+        equipment = get_field(plan.equipment)
+        filter_access_violations = []
+
+        for equip in equipment:
+            if equip.equipment_type not in params.equipment_with_filters:
+                continue
+
+            if not equip.filter_dimensions:
+                filter_access_violations.append(f"{equip.tag}: Filter dimensions not specified")
+                continue
+
+            # Calculate required clearance (1.5x filter length for removal)
+            filter_length = max(equip.filter_dimensions.length, equip.filter_dimensions.width)
+            required_clearance = filter_length * params.min_clearance_multiplier
+
+            # Measure clearance in filter access direction
+            access_side = equip.filter_access_side or "front"
+            actual_clearance = measure_clearance(equip, access_side)
+
+            if actual_clearance < required_clearance:
+                filter_access_violations.append(f"{equip.tag}: Filter access clearance {actual_clearance}\" < required {required_clearance:.0f}\" (1.5x {filter_length}\" filter)")
+
+        if filter_access_violations:
+            return fail("\n".join(filter_access_violations))
+
+        return pass()
+
+  - id: QA-403-MECH
+    description: Verify coil access clearances for cleaning and maintenance
+    severity: high
+    category: compliance
+    rationale: Coil maintenance requires access for cleaning, inspection, and potential replacement
+    check:
+      type: custom
+      function: validate_coil_access
+      params:
+        equipment_with_coils:
+          - "air_handler"
+          - "fan_coil_unit"
+          - "heat_pump"
+          - "condensing_unit"
+          - "chiller"
+        min_coil_clearance: 24  # inches
+      logic: |
+        # Check coil access clearances
+        equipment = get_field(plan.equipment)
+        coil_access_violations = []
+
+        for equip in equipment:
+            if equip.equipment_type not in params.equipment_with_coils:
+                continue
+
+            # Coil access typically requires 24" minimum
+            coil_access_side = equip.coil_access_side or "side"
+            actual_clearance = measure_clearance(equip, coil_access_side)
+
+            if actual_clearance < params.min_coil_clearance:
+                coil_access_violations.append(f"{equip.tag}: Coil access clearance {actual_clearance}\" < minimum {params.min_coil_clearance}\"")
+
+        if coil_access_violations:
+            return warn("\n".join(coil_access_violations))
+
+        return pass()
+
+  - id: QA-404-MECH
+    description: Verify ceiling height clearances for equipment installation and service
+    severity: critical
+    category: compliance
+    rationale: Adequate ceiling height is required for equipment installation, maintenance, and code compliance
+    check:
+      type: custom
+      function: validate_ceiling_height_clearances
+      params:
+        min_clearances_by_equipment:
+          air_handler:
+            equipment_height_plus: 30  # Equipment height + 30" clearance
+            absolute_min: 96  # 8 feet minimum
+          suspended_unit:
+            equipment_height_plus: 24
+            absolute_min: 84  # 7 feet minimum
+          ductwork:
+            equipment_height_plus: 12
+            absolute_min: 84
+      logic: |
+        # Validate ceiling height for equipment and ductwork
+        equipment = get_field(plan.equipment)
+        height_violations = []
+
+        for equip in equipment:
+            equipment_type = equip.equipment_type
+            if equipment_type not in params.min_clearances_by_equipment:
+                continue
+
+            clearance_spec = params.min_clearances_by_equipment[equipment_type]
+            room_ceiling_height = get_room_ceiling_height(equip.room_id)
+
+            # Calculate required height
+            equip_height = equip.physical_dimensions.height
+            required_height = max(
+                equip_height + clearance_spec.equipment_height_plus,
+                clearance_spec.absolute_min
+            )
+
+            if room_ceiling_height < required_height:
+                height_violations.append(f"{equip.tag}: Room ceiling height {room_ceiling_height}\" < required {required_height}\" (equipment {equip_height}\" + {clearance_spec.equipment_height_plus}\" clearance)")
+
+        if height_violations:
+            return fail("\n".join(height_violations))
+
+        return pass()
+
+  - id: QA-405-MECH
+    description: Verify maintenance clearances are annotated on plan for major equipment
+    severity: high
+    category: completeness
+    rationale: Clearance annotations ensure field personnel and contractors understand spatial requirements
+    check:
+      type: field_presence
+      field: plan.equipment[major_equipment=true].clearance_annotation
+      condition: not null
+      description: "Major equipment must have clearance dimensions annotated on plan"
+
+  - id: QA-406-MECH
+    description: Verify equipment tag consistency between plan and equipment schedule
+    severity: critical
+    category: consistency
+    rationale: Equipment tags must match between plan symbols and schedules for accurate identification and coordination
+    check:
+      type: cross_reference
+      reference_field: plan.equipment[*].tag
+      target_field: schedules.equipment_schedule[*].tag
+      condition: all_exist
+      description: "All equipment tags on plan must appear in equipment schedule"
+
+  - id: QA-407-MECH
+    description: Verify equipment schedule tags correspond to plan symbols
+    severity: high
+    category: consistency
+    rationale: Schedule entries without plan symbols may indicate missing equipment or orphaned schedule data
+    check:
+      type: cross_reference
+      reference_field: schedules.equipment_schedule[*].tag
+      target_field: plan.equipment[*].tag
+      condition: all_exist
+      params:
+        allow_spare_percent: 10  # Allow up to 10% spare/future equipment
+      description: "Equipment schedule tags should have corresponding symbols on plan"
+
+  - id: QA-408-MECH
+    description: Verify outside air and ventilation rates meet ASHRAE 62.1 requirements
+    severity: critical
+    category: compliance
+    rationale: ASHRAE 62.1 establishes minimum ventilation rates for acceptable indoor air quality
+    code_reference: ASHRAE 62.1-2022
+    check:
+      type: custom
+      function: validate_ventilation_rates
+      params:
+        occupancy_types:
+          office:
+            cfm_per_person: 5
+            cfm_per_sqft: 0.06
+          classroom:
+            cfm_per_person: 10
+            cfm_per_sqft: 0.12
+          conference_room:
+            cfm_per_person: 5
+            cfm_per_sqft: 0.06
+          retail:
+            cfm_per_person: 7.5
+            cfm_per_sqft: 0.12
+      logic: |
+        # Validate outside air rates per ASHRAE 62.1
+        air_handlers = get_field(schedules.equipment_schedule[equipment_type="air_handler"])
+        ventilation_violations = []
+
+        for ahu in air_handlers:
+            occupancy = ahu.served_space_occupancy
+            if occupancy not in params.occupancy_types:
+                continue
+
+            ventilation_spec = params.occupancy_types[occupancy]
+
+            # Calculate required ventilation (people + area components)
+            occupant_count = ahu.design_occupancy
+            floor_area = ahu.served_area_sqft
+
+            required_oa_cfm = (occupant_count * ventilation_spec.cfm_per_person) + \
+                              (floor_area * ventilation_spec.cfm_per_sqft)
+
+            actual_oa_cfm = ahu.outside_air_cfm
+
+            if actual_oa_cfm < required_oa_cfm:
+                ventilation_violations.append(f"{ahu.tag}: Outside air {actual_oa_cfm} CFM < required {required_oa_cfm:.0f} CFM per ASHRAE 62.1")
+
+        if ventilation_violations:
+            return fail("\n".join(ventilation_violations))
+
+        return pass()
+
+  - id: QA-409-MECH
+    description: Verify outside air intake location meets IMC separation requirements
+    severity: critical
+    category: compliance
+    rationale: IMC Section 401 requires minimum separation between outdoor air intakes and contamination sources
+    code_reference: IMC 2021 Section 401.5
+    check:
+      type: custom
+      function: validate_oa_intake_separation
+      params:
+        min_separations:
+          exhaust_outlet: 120  # 10 feet
+          plumbing_vent: 120
+          property_line: 120
+          grade: 36  # 3 feet above grade
+      logic: |
+        # Check outdoor air intake separation from contamination sources
+        oa_intakes = get_field(plan.outside_air_intakes)
+        separation_violations = []
+
+        for intake in oa_intakes:
+            # Check separation from exhaust outlets
+            nearest_exhaust = find_nearest_exhaust(intake)
+            if nearest_exhaust:
+                distance = calculate_distance(intake, nearest_exhaust)
+                if distance < params.min_separations.exhaust_outlet:
+                    separation_violations.append(f"{intake.tag}: {distance}\" from exhaust < minimum {params.min_separations.exhaust_outlet}\" (IMC 401.5)")
+
+            # Check height above grade
+            if intake.height_above_grade < params.min_separations.grade:
+                separation_violations.append(f"{intake.tag}: {intake.height_above_grade}\" above grade < minimum {params.min_separations.grade}\"")
+
+        if separation_violations:
+            return fail("\n".join(separation_violations))
+
+        return pass()
+
+  - id: QA-410-MECH
+    description: Verify condensate drain connection is shown for cooling equipment
+    severity: high
+    category: completeness
+    rationale: All cooling equipment requires condensate drainage to prevent water damage and equipment failure
+    check:
+      type: field_presence
+      field: plan.equipment[has_cooling=true].condensate_drain_shown
+      condition: equals true
+      description: "Cooling equipment must show condensate drain connection on plan"
+
+  - id: QA-411-MECH
+    description: Verify equipment physical dimensions are specified in schedule
+    severity: high
+    category: completeness
+    rationale: Equipment dimensions are required for coordination, clearance verification, and structural load calculations
+    check:
+      type: field_presence
+      fields:
+        - schedules.equipment_schedule[*].physical_dimensions.length
+        - schedules.equipment_schedule[*].physical_dimensions.width
+        - schedules.equipment_schedule[*].physical_dimensions.height
+      condition: not null
+      description: "Equipment schedule must include physical dimensions (L x W x H)"
+
+  - id: QA-412-MECH
+    description: Verify equipment weight is specified for structural coordination
+    severity: high
+    category: completeness
+    rationale: Equipment weight is required for structural load calculations and support design
+    check:
+      type: field_presence
+      field: schedules.equipment_schedule[requires_structural=true].operating_weight_lbs
+      condition: not null
+      description: "Equipment requiring structural support must specify operating weight"
+
+  - id: QA-413-MECH
+    description: Verify vibration isolation is specified for rotating equipment
+    severity: medium
+    category: completeness
+    rationale: Rotating equipment requires vibration isolation to prevent structural vibration transmission
+    check:
+      type: field_presence
+      field: schedules.equipment_schedule[rotating_equipment=true].vibration_isolation
+      condition: not null
+      description: "Rotating equipment (fans, pumps, compressors) must specify vibration isolation type"
+
+  - id: QA-414-MECH
+    description: Verify refrigerant piping clearances for service and leak detection
+    severity: medium
+    category: best_practice
+    rationale: Refrigerant piping requires access for leak detection, service, and potential replacement
+    check:
+      type: custom
+      function: validate_refrigerant_piping_access
+      params:
+        min_clearance: 12  # inches
+        equipment_with_refrigerant:
+          - "heat_pump"
+          - "condensing_unit"
+          - "chiller"
+          - "vrf_outdoor_unit"
+      logic: |
+        # Check clearances around refrigerant piping connections
+        equipment = get_field(plan.equipment)
+        piping_access_violations = []
+
+        for equip in equipment:
+            if equip.equipment_type not in params.equipment_with_refrigerant:
+                continue
+
+            # Check clearance around refrigerant connections
+            if equip.refrigerant_connections:
+                for connection in equip.refrigerant_connections:
+                    clearance = measure_clearance_at_point(connection.location)
+                    if clearance < params.min_clearance:
+                        piping_access_violations.append(f"{equip.tag}: Refrigerant connection clearance {clearance}\" < minimum {params.min_clearance}\"")
+
+        if piping_access_violations:
+            return warn("\n".join(piping_access_violations))
+
+        return pass()
+
+  - id: QA-415-MECH
+    description: Verify combustion air requirements are met for fuel-burning equipment
+    severity: critical
+    category: compliance
+    rationale: IMC Section 701 requires adequate combustion air for safe operation of fuel-burning equipment
+    code_reference: IMC 2021 Section 701
+    check:
+      type: custom
+      function: validate_combustion_air
+      params:
+        equipment_requiring_combustion_air:
+          - "furnace"
+          - "boiler"
+          - "water_heater"
+          - "unit_heater"
+        cfm_per_1000_btuh: 1  # Minimum 1 CFM per 1000 BTU/h input
+      logic: |
+        # Validate combustion air provisions
+        equipment = get_field(schedules.equipment_schedule)
+        combustion_air_violations = []
+
+        for equip in equipment:
+            if equip.equipment_type not in params.equipment_requiring_combustion_air:
+                continue
+
+            if not equip.fuel_type or equip.fuel_type == "electric":
+                continue
+
+            # Calculate required combustion air
+            input_btuh = equip.input_capacity_btuh
+            required_combustion_air = input_btuh / 1000  # CFM
+
+            # Check if combustion air is documented
+            if not equip.combustion_air_cfm:
+                combustion_air_violations.append(f"{equip.tag}: Combustion air not specified (required ~{required_combustion_air:.0f} CFM for {input_btuh} BTU/h)")
+            elif equip.combustion_air_cfm < required_combustion_air:
+                combustion_air_violations.append(f"{equip.tag}: Combustion air {equip.combustion_air_cfm} CFM < required {required_combustion_air:.0f} CFM")
+
+        if combustion_air_violations:
+            return fail("\n".join(combustion_air_violations))
+
+        return pass()

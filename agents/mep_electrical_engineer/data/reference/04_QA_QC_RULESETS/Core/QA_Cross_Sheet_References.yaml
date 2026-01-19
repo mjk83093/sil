@@ -1,0 +1,700 @@
+# QA/QC Rule: Cross-Sheet References Validation
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Agent: Cross-Reference Specialist
+# Applies to: All disciplines
+# Reference: Drawing_Type_Classification.md, SKILL.md Step 3 "Execute QA Validation"
+# Integration: Implements cross_reference check type from SKILL.md workflow
+
+rules:
+  - id: QA-XR-001
+    description: Validate all sheet references in general notes exist in the drawing set
+    severity: high
+    category: cross_reference
+    rationale: Referenced sheets must exist to enable contractors to locate details, sections, and supporting information. Missing references cause RFIs and construction delays.
+    code_reference: N/A (general practice)
+    check:
+      type: cross_reference
+      reference_field: notes.referenced_sheets
+      target_field: document.sheets
+      condition: all_exist
+      params:
+        allow_external: false
+        extract_pattern: '([A-Z]-\d{3}(?:\.\d+)?)'  # Matches E-101, M-301.1, etc.
+    validation_examples:
+      - scenario: "Note references 'See E-401 for one-line diagram'"
+        sheets_available: ["E-001", "E-101", "E-401", "E-501"]
+        expected_result: PASS
+        rationale: "Referenced sheet E-401 exists in drawing set"
+
+      - scenario: "Note references 'Detail 3/A-501'"
+        sheets_available: ["E-001", "E-101", "E-401"]
+        expected_result: FAIL
+        rationale: "Referenced sheet A-501 (architectural) not in electrical drawing set"
+
+      - scenario: "Multiple references: 'Coordinate with M-101 and P-201'"
+        sheets_available: ["E-101", "M-101", "M-201", "P-101"]
+        expected_result: FAIL
+        rationale: "P-201 referenced but not available in drawing set"
+
+  - id: QA-XR-002
+    description: Validate detail callout references point to valid detail sheets
+    severity: critical
+    category: cross_reference
+    rationale: Detail callouts (e.g., "3/E-601") must reference existing detail sheets. Invalid callouts prevent understanding of construction requirements.
+    code_reference: Drawing_Type_Classification.md Section 2.3 (Details)
+    check:
+      type: cross_reference
+      reference_field: plans.detail_callouts
+      target_field: document.detail_sheets
+      condition: all_exist
+      params:
+        callout_pattern: '(\d+)/([A-Z]-\d{3})'  # Matches "3/E-601" format
+        validate_detail_number: true
+    validation_logic: |
+      FOR EACH detail_callout IN plans.detail_callouts:
+        PARSE callout AS (detail_number, sheet_number)
+        CHECK sheet_number EXISTS IN document.sheets
+        IF EXISTS:
+          NAVIGATE TO sheet_number
+          CHECK detail_number EXISTS ON that sheet
+          IF NOT FOUND:
+            FAIL: "Detail {detail_number} not found on sheet {sheet_number}"
+        ELSE:
+          FAIL: "Sheet {sheet_number} does not exist"
+    validation_examples:
+      - scenario: "Plan shows callout '5/E-601'"
+        detail_sheet_E-601_details: [1, 2, 3, 4, 5, 6]
+        expected_result: PASS
+        rationale: "Detail 5 exists on sheet E-601"
+
+      - scenario: "Plan shows callout '9/E-601'"
+        detail_sheet_E-601_details: [1, 2, 3, 4, 5, 6]
+        expected_result: FAIL
+        rationale: "Detail 9 does not exist on E-601 (only 6 details present)"
+
+      - scenario: "Plan shows callout '2/E-699'"
+        available_sheets: ["E-001", "E-101", "E-601"]
+        expected_result: FAIL
+        rationale: "Referenced sheet E-699 does not exist in drawing set"
+
+  - id: QA-XR-003
+    description: Validate section cut references match actual section drawings
+    severity: high
+    category: cross_reference
+    rationale: Building sections and wall sections must correspond to cut lines shown on plans. Mismatched references cause coordination errors.
+    code_reference: Drawing_Type_Classification.md Section 2.3 (Sections)
+    check:
+      type: cross_reference
+      reference_field: plans.section_markers
+      target_field: elevations_sections.section_drawings
+      condition: bidirectional_match
+      params:
+        marker_format: 'section_id/sheet_number'
+        require_reciprocal: true
+    validation_logic: |
+      # Forward check: Plan → Section
+      FOR EACH section_marker IN plans.section_markers:
+        EXTRACT (section_id, sheet_number) FROM marker
+        VERIFY sheet_number EXISTS
+        VERIFY section_id appears on that sheet
+
+      # Reverse check: Section → Plan
+      FOR EACH section_drawing IN elevations_sections:
+        EXTRACT (section_id, source_plan) FROM section metadata
+        VERIFY source_plan sheet has matching section marker
+    validation_examples:
+      - scenario: "Plan E-101 shows section marker 'A-A/E-501'"
+        section_sheet_E-501_sections: ["A-A", "B-B", "C-C"]
+        section_A-A_metadata: {source_plan: "E-101"}
+        expected_result: PASS
+        rationale: "Section A-A exists on E-501 and references back to E-101"
+
+      - scenario: "Plan shows section 'D-D/E-501' but section sheet only has A-A, B-B, C-C"
+        expected_result: FAIL
+        rationale: "Section D-D not found on referenced sheet E-501"
+
+      - scenario: "Section drawing A-A on E-501 claims source is E-101, but E-101 has no section marker"
+        expected_result: FAIL
+        rationale: "Bidirectional check failed - section references plan but plan has no marker"
+
+  - id: QA-XR-004
+    description: Validate keynote references exist in legend or specifications
+    severity: medium
+    category: cross_reference
+    rationale: Keynotes on drawings must be defined in legend or linked specification sections. Undefined keynotes leave information gaps.
+    code_reference: Drawing_Type_Classification.md Section 7.3 (Legend Standards)
+    check:
+      type: cross_reference
+      reference_field: plans.keynotes
+      target_field: [legend.keynote_definitions, specifications.section_numbers]
+      condition: exists_in_either
+      params:
+        keynote_format: '^\d{2}-\d{4}$'  # e.g., 26-0513 (CSI MasterFormat)
+    validation_logic: |
+      FOR EACH keynote IN plans.keynotes:
+        found = FALSE
+        # Check legend first
+        IF keynote IN legend.keynote_definitions:
+          found = TRUE
+        # Check specifications
+        ELSE IF keynote.section_number IN specifications:
+          found = TRUE
+
+        IF NOT found:
+          FAIL: "Keynote {keynote} not defined in legend or specifications"
+    validation_examples:
+      - scenario: "Plan shows keynote '26-0513' (Medium Voltage Cables)"
+        legend_keynotes: ["26-0513", "26-2413", "26-2713"]
+        expected_result: PASS
+        rationale: "Keynote 26-0513 defined in legend"
+
+      - scenario: "Plan shows keynote '26-9999'"
+        legend_keynotes: ["26-0513", "26-2413"]
+        specifications: []
+        expected_result: FAIL
+        rationale: "Keynote 26-9999 not in legend or specifications"
+
+      - scenario: "Plan shows keynote '26-2813' not in legend but specification section exists"
+        legend_keynotes: ["26-0513"]
+        specification_sections: ["26-2813"]
+        expected_result: PASS
+        rationale: "Keynote references valid specification section"
+
+  - id: QA-XR-005
+    description: Validate coordination between electrical and mechanical sheets (cross-discipline)
+    severity: high
+    category: cross_reference
+    rationale: Electrical power plans must reference mechanical equipment shown on M-sheets. Ensures proper coordination of equipment connections.
+    code_reference: Drawing_Type_Classification.md Section 8 (Drawing Coordination)
+    check:
+      type: custom
+      function: validate_cross_discipline_coordination
+      params:
+        source_discipline: electrical
+        target_discipline: mechanical
+        equipment_tags_field: plans.equipment_connections
+        reference_sheet_field: equipment_schedule.sheet_reference
+    validation_logic: |
+      # Extract all equipment tags from E-sheets requiring power
+      electrical_equipment = EXTRACT_TAGS(electrical_plans.equipment_connections)
+
+      FOR EACH equip_tag IN electrical_equipment:
+        # Check if tag exists on M-sheets
+        IF equip_tag STARTS_WITH ["AHU", "FCU", "RTU", "EF", "SF"]:
+          found_on_m_sheet = SEARCH_IN(mechanical_plans.equipment_locations, equip_tag)
+          IF NOT found_on_m_sheet:
+            WARN: "Equipment {equip_tag} shown on E-sheet but not found on M-sheet"
+    validation_examples:
+      - scenario: "E-101 shows power connection to 'AHU-1' with note 'By Mechanical'"
+        mechanical_plan_M-101_equipment: ["AHU-1", "AHU-2", "EF-1"]
+        expected_result: PASS
+        rationale: "AHU-1 exists on mechanical plans"
+
+      - scenario: "E-201 shows disconnect for 'RTU-5'"
+        mechanical_plan_M-101_equipment: ["RTU-1", "RTU-2", "RTU-3"]
+        expected_result: FAIL
+        rationale: "RTU-5 referenced on electrical but not shown on mechanical plans"
+
+      - scenario: "E-301 shows panel 'LP-3' serving receptacles only (no HVAC equipment)"
+        expected_result: PASS
+        rationale: "No cross-discipline coordination required for lighting/receptacles"
+
+  - id: QA-XR-006
+    description: Validate typical detail references are consistent across sheets
+    severity: medium
+    category: cross_reference
+    rationale: Typical details (reusable details) must be referenced consistently. Same detail number should not refer to different conditions.
+    code_reference: Drawing_Type_Classification.md Section 2.3 (Typical Details)
+    check:
+      type: consistency
+      field: detail_sheets.typical_details
+      scope: all_sheets
+      condition: identical_for_same_id
+      params:
+        typical_prefix: 'TYP-'
+    validation_logic: |
+      typical_details_registry = {}
+
+      FOR EACH sheet IN document.sheets:
+        FOR EACH detail IN sheet.details:
+          IF detail.id STARTS_WITH "TYP-":
+            IF detail.id IN typical_details_registry:
+              # Compare with previously seen instance
+              IF NOT IDENTICAL(detail.content, typical_details_registry[detail.id]):
+                FAIL: "Typical detail {detail.id} has different content on {sheet}"
+            ELSE:
+              typical_details_registry[detail.id] = detail.content
+    validation_examples:
+      - scenario: "TYP-1 (conduit support) appears on E-601 and E-602 with identical content"
+        expected_result: PASS
+        rationale: "Typical detail content is consistent"
+
+      - scenario: "TYP-3 on E-601 shows 3/4\" EMT mounting, TYP-3 on E-602 shows 1\" RMC mounting"
+        expected_result: FAIL
+        rationale: "Same typical detail number refers to different construction methods"
+
+      - scenario: "TYP-2 appears only on E-601 (not reused)"
+        expected_result: WARN
+        rationale: "Detail marked as 'typical' but only appears once - consider renumbering"
+
+  - id: QA-XR-007
+    description: Validate match lines between adjacent plan sheets
+    severity: high
+    category: cross_reference
+    rationale: When plans are split across multiple sheets, match lines must align correctly to enable seamless navigation.
+    code_reference: Drawing_Type_Classification.md Section 6.4 (Sheet Completeness)
+    check:
+      type: custom
+      function: validate_match_lines
+      params:
+        match_line_field: plans.match_lines
+        require_bidirectional: true
+    validation_logic: |
+      FOR EACH sheet IN document.plan_sheets:
+        FOR EACH match_line IN sheet.match_lines:
+          EXTRACT adjacent_sheet FROM match_line
+          VERIFY adjacent_sheet EXISTS
+
+          # Check reciprocal match line
+          adjacent_sheet_obj = GET_SHEET(adjacent_sheet)
+          reciprocal_found = FALSE
+
+          FOR EACH adj_match_line IN adjacent_sheet_obj.match_lines:
+            IF adj_match_line.references == sheet.number:
+              reciprocal_found = TRUE
+              # Verify alignment (grid lines, elevation, etc.)
+              IF match_line.grid_reference != adj_match_line.grid_reference:
+                WARN: "Match line grid references don't align"
+
+          IF NOT reciprocal_found:
+            FAIL: "Match line to {adjacent_sheet} has no reciprocal match line"
+    validation_examples:
+      - scenario: "E-101 has match line at grid 10 pointing to E-102, E-102 has match line at grid 10 pointing to E-101"
+        expected_result: PASS
+        rationale: "Bidirectional match lines present and aligned"
+
+      - scenario: "E-201 has match line to E-202, but E-202 has no match line back to E-201"
+        expected_result: FAIL
+        rationale: "Missing reciprocal match line"
+
+      - scenario: "M-101 match line shows grid 'G', but M-102 match line shows grid 'H'"
+        expected_result: WARN
+        rationale: "Match line grid references misaligned"
+
+  - id: QA-XR-008
+    description: Validate enlarged plan references point to correct source sheet
+    severity: medium
+    category: cross_reference
+    rationale: Enlarged plans (e.g., E-101.1) must clearly reference their source plan (E-101) and show boundary on source.
+    code_reference: Drawing_Type_Classification.md Section 3.1.1 (Enlarged Floor Plans)
+    check:
+      type: cross_reference
+      reference_field: enlarged_plans.source_plan
+      target_field: plans.enlargement_boundaries
+      condition: bidirectional_match
+    validation_logic: |
+      # Forward check: Enlarged plan → Source
+      FOR EACH enlarged_plan IN document.enlarged_plans:
+        source_plan = enlarged_plan.metadata.source_plan
+        VERIFY source_plan EXISTS
+        VERIFY enlarged_plan.boundary_shown_on_source == TRUE
+
+      # Reverse check: Source → Enlarged
+      FOR EACH plan IN document.plans:
+        FOR EACH boundary IN plan.enlargement_boundaries:
+          target_sheet = boundary.enlarged_sheet
+          VERIFY target_sheet EXISTS
+          VERIFY target_sheet.metadata.source_plan == plan.number
+    validation_examples:
+      - scenario: "E-101.1 (enlarged toilet room) metadata shows source_plan: 'E-101', E-101 shows dashed boundary with callout 'See E-101.1'"
+        expected_result: PASS
+        rationale: "Bidirectional reference complete"
+
+      - scenario: "M-101.2 claims source is M-101, but M-101 has no enlargement boundary"
+        expected_result: FAIL
+        rationale: "Source plan missing boundary showing enlarged area"
+
+      - scenario: "E-201.1 exists but has no source_plan metadata"
+        expected_result: FAIL
+        rationale: "Enlarged plan missing source reference"
+
+  - id: QA-XR-009
+    description: Validate riser diagram floor references match actual plan sheets
+    severity: high
+    category: cross_reference
+    rationale: Riser diagrams show vertical distribution across floors. Floor labels must match actual floor plan sheet numbers.
+    code_reference: Drawing_Type_Classification.md Section 3.2.2 (Electrical Diagrams)
+    check:
+      type: cross_reference
+      reference_field: riser_diagrams.floor_references
+      target_field: plans.floor_level
+      condition: all_exist
+      params:
+        validate_floor_naming: true
+    validation_logic: |
+      FOR EACH riser IN document.riser_diagrams:
+        FOR EACH floor_ref IN riser.floor_references:
+          floor_name = floor_ref.label  # e.g., "2nd Floor"
+          sheet_ref = floor_ref.plan_sheet  # e.g., "E-201"
+
+          # Verify plan sheet exists
+          VERIFY sheet_ref EXISTS IN document.plans
+
+          # Verify floor name matches plan metadata
+          plan_sheet = GET_SHEET(sheet_ref)
+          IF plan_sheet.metadata.floor_name != floor_name:
+            WARN: "Floor name mismatch between riser and plan"
+    validation_examples:
+      - scenario: "Electrical riser E-401 shows '2nd Floor - E-201', plan E-201 metadata shows floor: '2nd Floor'"
+        expected_result: PASS
+        rationale: "Floor reference and plan metadata match"
+
+      - scenario: "Mechanical riser M-401 shows 'Level 3 - M-301', but M-301 doesn't exist"
+        expected_result: FAIL
+        rationale: "Referenced plan sheet not in drawing set"
+
+      - scenario: "Riser shows 'Third Floor - P-301', but P-301 metadata says 'Level 3'"
+        expected_result: WARN
+        rationale: "Floor naming inconsistency (not critical but should be uniform)"
+
+  - id: QA-XR-010
+    description: Validate one-line diagram equipment tags match plan and schedule tags
+    severity: critical
+    category: cross_reference
+    rationale: One-line diagrams show electrical distribution. All equipment tags must match plans and panel schedules exactly.
+    code_reference: Drawing_Type_Classification.md Section 3.2.2 (One-Line Diagrams)
+    check:
+      type: custom
+      function: validate_oneline_tag_consistency
+      params:
+        oneline_field: diagrams.one_line.equipment
+        plan_field: plans.equipment_tags
+        schedule_field: schedules.panel_schedule.equipment
+    validation_logic: |
+      # Extract all tags from one-line diagram
+      oneline_tags = EXTRACT_TAGS(diagrams.one_line.equipment)
+      plan_tags = EXTRACT_TAGS(plans.equipment_tags)
+      schedule_tags = EXTRACT_TAGS(schedules.panel_schedule.equipment)
+
+      FOR EACH tag IN oneline_tags:
+        # Panels must appear in schedules
+        IF tag MATCHES "^[A-Z]{1,3}-\d+[A-Z]?$":  # Panel naming: LP-1A, RP-2, etc.
+          IF tag NOT IN schedule_tags:
+            FAIL: "Panel {tag} on one-line but not in panel schedules"
+
+        # Equipment must appear on plans
+        IF tag NOT IN plan_tags:
+          WARN: "Equipment {tag} on one-line but not shown on plans"
+
+      # Reverse check: Panels on schedules should be on one-line
+      FOR EACH panel_tag IN schedule_tags:
+        IF panel_tag NOT IN oneline_tags:
+          FAIL: "Panel {panel_tag} in schedule but not on one-line diagram"
+    validation_examples:
+      - scenario: "One-line shows panel 'LP-2A', panel schedule sheet E-501 includes LP-2A, plan E-201 shows LP-2A location"
+        expected_result: PASS
+        rationale: "Complete tag consistency across all documents"
+
+      - scenario: "One-line shows 'RP-3', but no panel schedule exists for RP-3"
+        expected_result: FAIL
+        rationale: "Critical: Panel on one-line missing from schedules"
+
+      - scenario: "Panel schedule includes 'LP-5', but LP-5 not shown on one-line diagram"
+        expected_result: FAIL
+        rationale: "Panel in schedule must appear on one-line for distribution clarity"
+
+  - id: QA-XR-011
+    description: Validate schedule references to plan locations are accurate
+    severity: medium
+    category: cross_reference
+    rationale: Equipment schedules often reference plan sheet where equipment is located. These references must be accurate.
+    code_reference: Drawing_Type_Classification.md Section 2.4 (Schedules)
+    check:
+      type: cross_reference
+      reference_field: schedules.equipment_schedule.plan_reference
+      target_field: plans.equipment_locations
+      condition: tag_and_sheet_match
+    validation_logic: |
+      FOR EACH schedule_entry IN schedules.equipment_schedule:
+        equip_tag = schedule_entry.tag
+        ref_sheet = schedule_entry.plan_reference  # e.g., "M-101"
+
+        # Verify referenced sheet exists
+        VERIFY ref_sheet EXISTS IN document.plans
+
+        # Verify equipment tag appears on that sheet
+        plan_sheet = GET_SHEET(ref_sheet)
+        IF equip_tag NOT IN plan_sheet.equipment_tags:
+          FAIL: "Equipment {equip_tag} schedule says '{ref_sheet}' but not found on that sheet"
+    validation_examples:
+      - scenario: "Equipment schedule shows 'AHU-1' with plan reference 'M-101', plan M-101 shows AHU-1"
+        expected_result: PASS
+        rationale: "Schedule plan reference is accurate"
+
+      - scenario: "Schedule shows 'EF-3' with reference 'M-201', but EF-3 is actually on M-101"
+        expected_result: FAIL
+        rationale: "Incorrect plan reference in schedule"
+
+      - scenario: "Schedule shows equipment 'PUMP-1' with no plan reference"
+        expected_result: WARN
+        rationale: "Missing plan reference (not critical but helpful for coordination)"
+
+  - id: QA-XR-012
+    description: Validate grid line references are consistent across all plan sheets
+    severity: high
+    category: cross_reference
+    rationale: Grid lines enable spatial coordination. Same grid line identifiers must align across architectural, structural, and MEP plans.
+    code_reference: Drawing_Type_Classification.md Section 9.2 (Plan View Coordination)
+    check:
+      type: consistency
+      field: plans.grid_lines
+      scope: all_plan_sheets
+      condition: identical_locations
+      params:
+        tolerance_inches: 3  # Allow 3" variance for drawing accuracy
+    validation_logic: |
+      # Build grid registry from first plan sheet (usually architectural)
+      base_grids = GET_GRID_LINES(document.plans[0])
+
+      FOR EACH plan_sheet IN document.plans[1:]:
+        sheet_grids = GET_GRID_LINES(plan_sheet)
+
+        FOR EACH grid IN base_grids:
+          IF grid.id IN sheet_grids:
+            base_location = grid.coordinates
+            sheet_location = sheet_grids[grid.id].coordinates
+            distance = CALCULATE_DISTANCE(base_location, sheet_location)
+
+            IF distance > tolerance_inches:
+              FAIL: "Grid {grid.id} on {plan_sheet.number} misaligned by {distance} inches"
+          ELSE:
+            WARN: "Grid {grid.id} missing on {plan_sheet.number}"
+    validation_examples:
+      - scenario: "Grid line 'A' on A-101, E-101, M-101, P-101 all at X=0', Y=0' (aligned within 1\")"
+        expected_result: PASS
+        rationale: "Grid lines consistently located across disciplines"
+
+      - scenario: "Grid line '5' on E-201 is 6 inches off from same grid on A-201"
+        expected_result: FAIL
+        rationale: "Grid misalignment exceeds 3\" tolerance"
+
+      - scenario: "Grid line 'G' appears on A-101, E-101, M-101 but not on P-101"
+        expected_result: WARN
+        rationale: "Grid line missing on plumbing plan"
+
+  - id: QA-XR-013
+    description: Validate north arrow orientation is consistent across all plan sheets
+    severity: medium
+    category: cross_reference
+    rationale: North arrows must point same direction on all plans to prevent orientation confusion during coordination.
+    code_reference: Drawing_Type_Classification.md Section 9.1 (Plan Drawing Validation)
+    check:
+      type: consistency
+      field: plans.north_arrow
+      scope: all_plan_sheets
+      condition: identical_angle
+      params:
+        tolerance_degrees: 5
+    validation_logic: |
+      base_north_angle = document.plans[0].north_arrow.angle
+
+      FOR EACH plan_sheet IN document.plans[1:]:
+        IF NOT plan_sheet.north_arrow.present:
+          WARN: "North arrow missing on {plan_sheet.number}"
+        ELSE:
+          angle_diff = ABS(plan_sheet.north_arrow.angle - base_north_angle)
+          IF angle_diff > tolerance_degrees:
+            FAIL: "North arrow on {plan_sheet.number} oriented {angle_diff}° different from other plans"
+    validation_examples:
+      - scenario: "All plan sheets have north arrow at 90° (pointing up)"
+        expected_result: PASS
+        rationale: "Consistent north arrow orientation"
+
+      - scenario: "E-101 north arrow at 90°, M-101 north arrow at 270° (rotated 180°)"
+        expected_result: FAIL
+        rationale: "North arrow orientation inconsistent across disciplines"
+
+      - scenario: "P-201 has no north arrow symbol"
+        expected_result: WARN
+        rationale: "Missing north arrow (recommended but not always critical)"
+
+  - id: QA-XR-014
+    description: Validate drawing index matches actual sheet numbers and titles
+    severity: high
+    category: cross_reference
+    rationale: Drawing index (typically on cover sheet) must accurately list all sheets in the set. Outdated index causes confusion.
+    code_reference: Drawing_Type_Classification.md Section 6.4 (Sheet Completeness)
+    check:
+      type: custom
+      function: validate_drawing_index
+      params:
+        index_sheet: "G-001"  # Typical cover sheet number
+        index_field: cover_sheet.drawing_index
+    validation_logic: |
+      index_entries = EXTRACT_INDEX(cover_sheet.drawing_index)
+      actual_sheets = document.sheets
+
+      # Check all indexed sheets exist
+      FOR EACH entry IN index_entries:
+        IF entry.sheet_number NOT IN actual_sheets:
+          FAIL: "Index lists sheet {entry.sheet_number} which does not exist"
+        ELSE:
+          actual_sheet = GET_SHEET(entry.sheet_number)
+          IF entry.sheet_title != actual_sheet.title:
+            WARN: "Index title for {entry.sheet_number} doesn't match actual sheet title"
+
+      # Check all actual sheets are indexed
+      FOR EACH sheet IN actual_sheets:
+        IF sheet.number NOT IN index_entries:
+          FAIL: "Sheet {sheet.number} exists but not listed in drawing index"
+    validation_examples:
+      - scenario: "Index lists E-101, E-201, E-301, E-401, E-501 and all sheets exist with matching titles"
+        expected_result: PASS
+        rationale: "Drawing index complete and accurate"
+
+      - scenario: "Index lists sheet E-302, but E-302 does not exist in drawing set"
+        expected_result: FAIL
+        rationale: "Index references non-existent sheet"
+
+      - scenario: "Sheet E-601 exists but is not listed in index"
+        expected_result: FAIL
+        rationale: "Sheet omitted from index"
+
+  - id: QA-XR-015
+    description: Validate superseded sheet notes reference previous revision numbers
+    severity: low
+    category: cross_reference
+    rationale: When sheets are superseded or deleted, notes should reference which revision they were valid through.
+    code_reference: Drawing_Type_Classification.md Section 10 (Drawing Revision Management)
+    check:
+      type: field_presence
+      fields:
+        - superseded_sheets.previous_revision
+        - superseded_sheets.superseded_date
+      condition: not null
+      params:
+        applies_to_phase: ["CD", "ASB", "Record"]
+    validation_logic: |
+      FOR EACH sheet IN document.sheets:
+        IF sheet.status == "SUPERSEDED":
+          IF sheet.superseded_metadata.previous_revision IS NULL:
+            WARN: "Superseded sheet {sheet.number} missing previous revision reference"
+
+          IF sheet.superseded_metadata.superseded_date IS NULL:
+            WARN: "Superseded sheet {sheet.number} missing superseded date"
+    validation_examples:
+      - scenario: "Sheet E-301 marked 'SUPERSEDED' with note 'Valid through Revision B02, superseded 2024-03-15'"
+        expected_result: PASS
+        rationale: "Superseded sheet properly documented"
+
+      - scenario: "Sheet marked 'VOID' with no previous revision information"
+        expected_result: WARN
+        rationale: "Missing supersession documentation"
+
+      - scenario: "Active sheet (not superseded)"
+        expected_result: PASS
+        rationale: "Rule only applies to superseded sheets"
+
+# Custom Validation Functions (Pseudocode Implementation)
+
+custom_functions:
+  validate_cross_discipline_coordination:
+    description: "Validates equipment tags referenced across electrical and mechanical disciplines"
+    implementation: |
+      FUNCTION validate_cross_discipline_coordination(source_discipline, target_discipline, equipment_tags_field, reference_sheet_field):
+        source_equipment = EXTRACT_EQUIPMENT_TAGS(source_discipline.plans)
+        target_equipment = EXTRACT_EQUIPMENT_TAGS(target_discipline.plans)
+
+        issues = []
+        FOR EACH equip_tag IN source_equipment:
+          equipment_type = DETERMINE_TYPE(equip_tag)  # AHU, FCU, RTU, etc.
+
+          IF equipment_type REQUIRES_COORDINATION(source_discipline, target_discipline):
+            IF equip_tag NOT IN target_equipment:
+              issues.APPEND({
+                tag: equip_tag,
+                severity: "high",
+                message: "Equipment {equip_tag} on {source_discipline} not found on {target_discipline}"
+              })
+
+        RETURN issues
+
+  validate_oneline_tag_consistency:
+    description: "Validates electrical one-line diagram equipment tags match plans and schedules"
+    implementation: |
+      FUNCTION validate_oneline_tag_consistency(oneline_field, plan_field, schedule_field):
+        oneline_tags = EXTRACT_TAGS(oneline_field)
+        plan_tags = EXTRACT_TAGS(plan_field)
+        schedule_tags = EXTRACT_TAGS(schedule_field)
+
+        issues = []
+
+        # Check one-line → schedules/plans
+        FOR EACH tag IN oneline_tags:
+          IF IS_PANEL_TAG(tag):
+            IF tag NOT IN schedule_tags:
+              issues.APPEND({severity: "critical", message: "Panel {tag} on one-line not in schedules"})
+
+          IF tag NOT IN plan_tags:
+            issues.APPEND({severity: "medium", message: "Equipment {tag} on one-line not on plans"})
+
+        # Check schedules → one-line
+        FOR EACH panel_tag IN schedule_tags:
+          IF panel_tag NOT IN oneline_tags:
+            issues.APPEND({severity: "critical", message: "Panel {panel_tag} in schedule not on one-line"})
+
+        RETURN issues
+
+  validate_drawing_index:
+    description: "Validates drawing index completeness and accuracy"
+    implementation: |
+      FUNCTION validate_drawing_index(index_sheet, index_field):
+        index_entries = PARSE_INDEX(index_sheet, index_field)
+        actual_sheets = GET_ALL_SHEETS()
+
+        issues = []
+
+        # Forward check: Index → Sheets
+        FOR EACH entry IN index_entries:
+          IF entry.sheet_number NOT IN actual_sheets:
+            issues.APPEND({severity: "high", message: "Index lists non-existent sheet {entry.sheet_number}"})
+          ELSE:
+            actual_title = GET_SHEET_TITLE(entry.sheet_number)
+            IF entry.sheet_title != actual_title:
+              issues.APPEND({severity: "medium", message: "Index title mismatch for {entry.sheet_number}"})
+
+        # Reverse check: Sheets → Index
+        FOR EACH sheet IN actual_sheets:
+          IF sheet.number NOT IN [e.sheet_number FOR e IN index_entries]:
+            issues.APPEND({severity: "high", message: "Sheet {sheet.number} not listed in index"})
+
+        RETURN issues
+
+# Integration with SKILL.md Workflow
+
+workflow_integration:
+  step_3_execute_qa_validation:
+    description: "This ruleset implements the 'cross_reference' check type from SKILL.md Step 3"
+    check_types_implemented:
+      - cross_reference: "Rules QA-XR-001 through QA-XR-015"
+      - custom: "Rules QA-XR-005, QA-XR-010, QA-XR-014 (complex validation logic)"
+
+  usage_example: |
+    # From SKILL.md Step 3: Execute QA Validation
+
+    1. Parse rule definition (QA-XR-002: Detail callouts)
+    2. Locate target data (plans.detail_callouts from JSON)
+    3. Apply validation logic (parse callout, verify sheet exists, verify detail number)
+    4. Record result:
+       - Sheet: E-101
+       - Rule ID: QA-XR-002
+       - Status: FAIL
+       - Details: "Detail 9 not found on sheet E-601"
+
+# Version History
+version_history:
+  - version: 1.0.0
+    date: 2025-01-22
+    author: Cross-Reference Specialist (Agent 1)
+    changes: Initial creation with 15 comprehensive cross-sheet reference validation rules

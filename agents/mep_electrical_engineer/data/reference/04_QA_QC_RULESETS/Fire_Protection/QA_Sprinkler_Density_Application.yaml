@@ -1,0 +1,430 @@
+# QA/QC Rule: Fire Sprinkler Density and Application
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Applies to: Fire protection sprinkler system drawings
+# Reference: NFPA 13-2022 (Installation of Sprinkler Systems)
+
+rules:
+  - id: QA-501-FP
+    description: Verify design area and density are specified per occupancy hazard classification
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 requires design area and density to be determined based on occupancy hazard classification
+    code_reference: NFPA 13-2022 11.2, Tables 11.2.3.1.1, 11.2.3.1.2
+    check:
+      type: custom
+      function: validate_design_area_density
+      params:
+        hazard_classifications:
+          light_hazard:
+            min_design_area_sqft: 1500
+            density_range: [0.10, 0.20]  # gpm/sqft
+          ordinary_hazard_group_1:
+            min_design_area_sqft: 1500
+            density_range: [0.15, 0.20]
+          ordinary_hazard_group_2:
+            min_design_area_sqft: 1500
+            density_range: [0.20, 0.25]
+          extra_hazard_group_1:
+            min_design_area_sqft: 2500
+            density_range: [0.30, 0.40]
+          extra_hazard_group_2:
+            min_design_area_sqft: 2500
+            density_range: [0.40, 0.50]
+      logic: |
+        # Validate design area and density against NFPA 13 requirements
+        sprinkler_zones = get_field(schedules.sprinkler_zone_schedule)
+        density_violations = []
+
+        for zone in sprinkler_zones:
+            hazard_class = zone.hazard_classification.lower().replace(" ", "_")
+
+            if hazard_class not in params.hazard_classifications:
+                density_violations.append(f"Zone {zone.zone_id}: Unknown hazard classification '{zone.hazard_classification}'")
+                continue
+
+            requirements = params.hazard_classifications[hazard_class]
+
+            # Verify design area
+            design_area = zone.design_area_sqft
+            if design_area < requirements.min_design_area_sqft:
+                density_violations.append(f"Zone {zone.zone_id}: Design area {design_area} sqft < minimum {requirements.min_design_area_sqft} sqft for {zone.hazard_classification}")
+
+            # Verify density
+            density = zone.design_density_gpm_sqft
+            min_density, max_density = requirements.density_range
+            if density < min_density or density > max_density:
+                density_violations.append(f"Zone {zone.zone_id}: Density {density} gpm/sqft outside range {min_density}-{max_density} gpm/sqft for {zone.hazard_classification}")
+
+        if density_violations:
+            return fail("\n".join(density_violations))
+
+        return pass()
+
+  - id: QA-502-FP
+    description: Verify sprinkler head spacing does not exceed maximum coverage area
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 Table 8.6.2.2.1(a) limits maximum protection area per sprinkler based on construction and hazard
+    code_reference: NFPA 13-2022 8.6.2.2.1
+    check:
+      type: custom
+      function: validate_sprinkler_spacing
+      params:
+        max_coverage_by_construction:
+          noncombustible_unobstructed:
+            light_hazard: 200  # sqft
+            ordinary_hazard: 130
+          combustible_unobstructed:
+            light_hazard: 168
+            ordinary_hazard: 130
+          combustible_obstructed:
+            light_hazard: 130
+            ordinary_hazard: 130
+        max_spacing_dimension: 15  # feet (standard for most applications)
+      logic: |
+        # Check sprinkler head spacing and coverage
+        sprinkler_heads = get_field(plan.sprinkler_heads)
+        spacing_violations = []
+
+        for head in sprinkler_heads:
+            # Get zone information
+            zone = get_zone_for_head(head)
+            if not zone:
+                continue
+
+            # Determine max coverage based on construction and hazard
+            construction_type = zone.construction_type.lower().replace(" ", "_")
+            hazard = "ordinary_hazard" if "ordinary" in zone.hazard_classification.lower() else "light_hazard"
+
+            max_coverage = params.max_coverage_by_construction.get(construction_type, {}).get(hazard)
+            if not max_coverage:
+                continue
+
+            # Calculate actual coverage area
+            actual_coverage = calculate_head_coverage_area(head)
+            if actual_coverage > max_coverage:
+                spacing_violations.append(f"Sprinkler {head.tag}: Coverage area {actual_coverage} sqft > maximum {max_coverage} sqft (NFPA 13 Table 8.6.2.2.1)")
+
+            # Check maximum spacing dimension (typically 15 ft)
+            spacing_s = head.spacing_longitudinal_ft
+            spacing_l = head.spacing_transverse_ft
+            if spacing_s > params.max_spacing_dimension or spacing_l > params.max_spacing_dimension:
+                spacing_violations.append(f"Sprinkler {head.tag}: Spacing {spacing_s}' x {spacing_l}' exceeds maximum {params.max_spacing_dimension}' dimension")
+
+        if spacing_violations:
+            return fail("\n".join(spacing_violations))
+
+        return pass()
+
+  - id: QA-503-FP
+    description: Verify hydraulic calculation reference is present on drawing
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 23.4.3 requires hydraulic calculation sheets to be signed, sealed, and referenced on drawings
+    code_reference: NFPA 13-2022 23.4.3
+    check:
+      type: field_presence
+      fields:
+        - title_block.hydraulic_calc_reference
+        - title_block.hydraulic_calc_sheet_count
+      condition: not null
+      description: "Drawing must reference hydraulic calculation sheets per NFPA 13 23.4.3"
+
+  - id: QA-504-FP
+    description: Verify water supply data is documented on drawing
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 requires water supply test data to be shown on plans for system design verification
+    code_reference: NFPA 13-2022 23.1.2
+    check:
+      type: field_presence
+      fields:
+        - schedules.water_supply.static_pressure_psi
+        - schedules.water_supply.residual_pressure_psi
+        - schedules.water_supply.flow_rate_gpm
+        - schedules.water_supply.test_date
+      condition: not null
+      description: "Water supply test data required: static pressure, residual pressure, flow rate, and test date"
+
+  - id: QA-505-FP
+    description: Verify sprinkler head type matches hazard classification
+    severity: critical
+    category: compliance
+    rationale: Sprinkler head characteristics (K-factor, temperature rating, response time) must be appropriate for hazard
+    code_reference: NFPA 13-2022 6.2
+    check:
+      type: custom
+      function: validate_head_type_for_hazard
+      params:
+        head_requirements_by_hazard:
+          light_hazard:
+            k_factor: [5.6, 8.0, 11.2]  # Standard, large, extra-large orifice
+            temperature_rating: [135, 155, 175, 200]  # °F
+            response_type: ["standard", "quick"]
+          ordinary_hazard:
+            k_factor: [5.6, 8.0, 11.2]
+            temperature_rating: [135, 155, 175, 200]
+            response_type: ["standard", "quick"]
+          extra_hazard:
+            k_factor: [5.6, 8.0, 11.2, 14.0]
+            temperature_rating: [175, 200, 286]  # Higher temps for extra hazard
+            response_type: ["standard"]
+      logic: |
+        # Validate sprinkler head specifications
+        sprinkler_zones = get_field(schedules.sprinkler_zone_schedule)
+        head_violations = []
+
+        for zone in sprinkler_zones:
+            hazard = zone.hazard_classification.lower().replace(" ", "_")
+            if "light" in hazard:
+                hazard = "light_hazard"
+            elif "extra" in hazard:
+                hazard = "extra_hazard"
+            else:
+                hazard = "ordinary_hazard"
+
+            requirements = params.head_requirements_by_hazard.get(hazard)
+            if not requirements:
+                continue
+
+            # Validate K-factor
+            if zone.head_k_factor not in requirements.k_factor:
+                head_violations.append(f"Zone {zone.zone_id}: K-factor {zone.head_k_factor} not appropriate for {zone.hazard_classification}")
+
+            # Validate temperature rating
+            if zone.head_temperature_rating not in requirements.temperature_rating:
+                head_violations.append(f"Zone {zone.zone_id}: Temperature rating {zone.head_temperature_rating}°F not appropriate for {zone.hazard_classification}")
+
+        if head_violations:
+            return fail("\n".join(head_violations))
+
+        return pass()
+
+  - id: QA-506-FP
+    description: Verify obstruction rules compliance notes are present
+    severity: high
+    category: compliance
+    rationale: NFPA 13 Chapter 8.15 requires consideration of obstructions to sprinkler discharge
+    code_reference: NFPA 13-2022 8.15
+    check:
+      type: field_presence
+      field: notes.obstruction_rules_compliance
+      condition: not null
+      description: "Drawing must include note regarding NFPA 13 obstruction rules compliance"
+
+  - id: QA-507-FP
+    description: Verify sprinkler main and branch line sizes are specified
+    severity: critical
+    category: completeness
+    rationale: Pipe sizes are required for hydraulic calculations and field installation
+    check:
+      type: field_presence
+      fields:
+        - plan.sprinkler_mains[*].pipe_size
+        - plan.sprinkler_branches[*].pipe_size
+      condition: not null
+      description: "All sprinkler piping must have size specified (e.g., '2\"', '1-1/4\"')"
+
+  - id: QA-508-FP
+    description: Verify fire department connection (FDC) location is shown and accessible
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 requires FDC to be visible and accessible from fire department apparatus access road
+    code_reference: NFPA 13-2022 A.16.15.3
+    check:
+      type: custom
+      function: validate_fdc_location
+      params:
+        max_distance_from_hydrant: 100  # feet
+        min_distance_from_building: 3   # feet
+        require_visible_from_street: true
+      logic: |
+        # Validate FDC location and accessibility
+        fdc = get_field(plan.fire_department_connection)
+        fdc_violations = []
+
+        if not fdc:
+            return fail("Fire Department Connection (FDC) not shown on plan")
+
+        # Check distance from hydrant
+        nearest_hydrant = find_nearest_hydrant(fdc)
+        if nearest_hydrant:
+            distance = calculate_distance(fdc, nearest_hydrant)
+            if distance > params.max_distance_from_hydrant:
+                fdc_violations.append(f"FDC is {distance}' from nearest hydrant, recommend < {params.max_distance_from_hydrant}' for fire department access")
+
+        # Check clearance from building
+        distance_from_building = calculate_distance_to_building(fdc)
+        if distance_from_building < params.min_distance_from_building:
+            fdc_violations.append(f"FDC is {distance_from_building}' from building, minimum {params.min_distance_from_building}' required")
+
+        # Check visibility from street
+        if params.require_visible_from_street and not fdc.visible_from_street:
+            fdc_violations.append("FDC must be visible from street per NFPA 13")
+
+        if fdc_violations:
+            return warn("\n".join(fdc_violations))
+
+        return pass()
+
+  - id: QA-509-FP
+    description: Verify system type is clearly identified on drawings
+    severity: high
+    category: completeness
+    rationale: System type (wet, dry, pre-action, deluge) determines installation and maintenance requirements
+    check:
+      type: field_presence
+      field: schedules.sprinkler_zone_schedule[*].system_type
+      condition: not null
+      description: "System type must be specified for each zone (wet pipe, dry pipe, pre-action, deluge)"
+
+  - id: QA-510-FP
+    description: Verify alarm valves and riser locations are shown on plan
+    severity: critical
+    category: completeness
+    rationale: Alarm valves and risers are critical system components requiring coordination and access
+    check:
+      type: field_presence
+      fields:
+        - plan.alarm_valves
+        - plan.sprinkler_risers
+      condition: not null
+      description: "Alarm valves and sprinkler risers must be shown on plan with clear identification"
+
+  - id: QA-511-FP
+    description: Verify inspector's test connection is shown and located per NFPA 13
+    severity: high
+    category: compliance
+    rationale: NFPA 13 requires inspector's test connection at end of most remote branch line
+    code_reference: NFPA 13-2022 16.14
+    check:
+      type: custom
+      function: validate_inspectors_test
+      logic: |
+        # Verify inspector's test connections
+        sprinkler_zones = get_field(schedules.sprinkler_zone_schedule)
+        test_violations = []
+
+        for zone in sprinkler_zones:
+            inspectors_test = find_inspectors_test_for_zone(zone)
+
+            if not inspectors_test:
+                test_violations.append(f"Zone {zone.zone_id}: Inspector's test connection not found")
+                continue
+
+            # Verify it's at end of most remote branch
+            if not inspectors_test.at_remote_location:
+                test_violations.append(f"Zone {zone.zone_id}: Inspector's test should be at end of most remote branch line")
+
+            # Verify drain to approved location
+            if not inspectors_test.drain_location_approved:
+                test_violations.append(f"Zone {zone.zone_id}: Inspector's test drain location must be approved")
+
+        if test_violations:
+            return warn("\n".join(test_violations))
+
+        return pass()
+
+  - id: QA-512-FP
+    description: Verify sprinkler head temperature ratings are appropriate for ambient conditions
+    severity: high
+    category: compliance
+    rationale: NFPA 13 Table 6.2.5.1 specifies temperature ratings based on maximum ambient ceiling temperature
+    code_reference: NFPA 13-2022 6.2.5.1
+    check:
+      type: custom
+      function: validate_temperature_ratings
+      params:
+        temperature_rating_by_ambient:
+          "100": [135, 155]      # Ambient up to 100°F
+          "150": [175, 200]      # Ambient 101-150°F
+          "225": [286]           # Ambient 151-225°F
+      logic: |
+        # Validate temperature ratings match ambient conditions
+        sprinkler_zones = get_field(schedules.sprinkler_zone_schedule)
+        temp_violations = []
+
+        for zone in sprinkler_zones:
+            max_ambient = zone.maximum_ambient_temp_f
+            head_temp_rating = zone.head_temperature_rating
+
+            # Find appropriate temperature rating range
+            for ambient_threshold, allowed_ratings in params.temperature_rating_by_ambient.items():
+                if max_ambient <= int(ambient_threshold):
+                    if head_temp_rating not in allowed_ratings:
+                        temp_violations.append(f"Zone {zone.zone_id}: {head_temp_rating}°F rating not appropriate for {max_ambient}°F ambient (NFPA 13 Table 6.2.5.1)")
+                    break
+
+        if temp_violations:
+            return fail("\n".join(temp_violations))
+
+        return pass()
+
+  - id: QA-513-FP
+    description: Verify seismic bracing is specified for seismic design categories D, E, F
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 Chapter 9 requires seismic bracing for sprinkler systems in seismic zones
+    code_reference: NFPA 13-2022 9.3
+    check:
+      type: custom
+      function: validate_seismic_bracing
+      params:
+        seismic_categories_requiring_bracing: ["D", "E", "F"]
+      logic: |
+        # Check if seismic bracing is specified
+        seismic_category = get_field(title_block.seismic_design_category)
+
+        if seismic_category in params.seismic_categories_requiring_bracing:
+            bracing_notes = get_field(notes.seismic_bracing)
+
+            if not bracing_notes:
+                return fail(f"Seismic Design Category {seismic_category} requires seismic bracing details per NFPA 13 Chapter 9")
+
+        return pass()
+
+  - id: QA-514-FP
+    description: Verify antifreeze solution type and concentration is specified for dry systems
+    severity: high
+    category: compliance
+    rationale: NFPA 13 restricts antifreeze types and requires specific concentrations for freeze protection
+    code_reference: NFPA 13-2022 7.4.3
+    check:
+      type: custom
+      function: validate_antifreeze_specification
+      logic: |
+        # Check antifreeze specifications for systems requiring freeze protection
+        sprinkler_zones = get_field(schedules.sprinkler_zone_schedule)
+        antifreeze_violations = []
+
+        for zone in sprinkler_zones:
+            if zone.freeze_protection_required:
+                if not zone.antifreeze_type:
+                    antifreeze_violations.append(f"Zone {zone.zone_id}: Antifreeze type not specified (required for freeze protection)")
+
+                if not zone.antifreeze_concentration:
+                    antifreeze_violations.append(f"Zone {zone.zone_id}: Antifreeze concentration not specified")
+
+                # Verify antifreeze type is NFPA 13 compliant
+                if zone.antifreeze_type and zone.antifreeze_type not in ["propylene_glycol", "glycerin"]:
+                    antifreeze_violations.append(f"Zone {zone.zone_id}: Antifreeze type '{zone.antifreeze_type}' may not be NFPA 13 compliant (use propylene glycol or glycerin)")
+
+        if antifreeze_violations:
+            return fail("\n".join(antifreeze_violations))
+
+        return pass()
+
+  - id: QA-515-FP
+    description: Verify sprinkler demand at base of riser is calculated and documented
+    severity: critical
+    category: compliance
+    rationale: NFPA 13 requires hydraulic calculations to show system demand at riser
+    code_reference: NFPA 13-2022 23.4.3.1
+    check:
+      type: field_presence
+      fields:
+        - schedules.sprinkler_zone_schedule[*].system_demand_gpm
+        - schedules.sprinkler_zone_schedule[*].system_demand_psi
+      condition: not null
+      description: "System demand (flow and pressure) must be calculated and shown at base of riser"

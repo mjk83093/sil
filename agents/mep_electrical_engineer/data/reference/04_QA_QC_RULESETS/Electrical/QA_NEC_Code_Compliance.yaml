@@ -1,0 +1,889 @@
+# QA/QC Rule: NEC Code Compliance Validation
+# Version: 1.0.0
+# Last Updated: 2025-01-22
+# Agent: NEC Compliance Specialist (Agent 2)
+# Applies to: Electrical discipline
+# Reference: NEC 2023, NEC Article summaries, SKILL.md QA validation workflow
+# Integration: Direct implementation of NEC article summaries + QA validation
+
+rules:
+  - id: QA-NEC-110.26-001
+    description: Validate working space depth clearance in front of electrical equipment (NEC 110.26(A)(1))
+    severity: critical
+    category: nec_compliance
+    rationale: Working space clearances are life-safety requirements. Insufficient clearance creates shock and arc flash hazards during maintenance and operation.
+    code_reference: NEC 2023 Article 110.26(A)(1) - Working Space Depths, Table 110.26(A)(1)
+    check:
+      type: custom
+      function: validate_working_space_clearance
+      params:
+        equipment_types: ["panel", "switchboard", "mcc", "disconnect", "transformer"]
+        dimension_field: equipment.working_space.depth_feet
+        voltage_field: equipment.voltage
+        condition_field: equipment.working_space.condition
+    validation_logic: |
+      # NEC Table 110.26(A)(1) Working Space Requirements
+      # Condition 1: Exposed live parts on one side, grounded on other
+      # Condition 2: Exposed live parts on both sides
+      # Condition 3: Exposed live parts on both sides (closer spacing)
+
+      working_space_requirements = {
+        "0-150V": {1: 3.0, 2: 3.0, 3: 3.0},      # feet
+        "151-600V": {1: 3.0, 2: 3.5, 3: 4.0},    # feet
+        "601-2500V": {1: 3.0, 2: 4.0, 3: 5.0}    # feet
+      }
+
+      FOR EACH equipment IN electrical_equipment:
+        IF equipment.type IN ["panel", "switchboard", "mcc", "disconnect"]:
+          voltage = equipment.voltage
+          condition = equipment.working_space.condition  # 1, 2, or 3
+          actual_depth = equipment.working_space.depth_feet
+
+          voltage_category = DETERMINE_VOLTAGE_CATEGORY(voltage)
+          required_depth = working_space_requirements[voltage_category][condition]
+
+          IF actual_depth < required_depth:
+            FAIL: "Equipment {equipment.tag} working space depth {actual_depth}' less than required {required_depth}' (NEC 110.26(A)(1), Condition {condition})"
+    validation_examples:
+      - scenario: "Panel LP-1A (120/208V, Condition 1) with 3.0' clearance"
+        equipment: {voltage: 208, condition: 1, depth: 3.0}
+        expected_result: PASS
+        rationale: "Meets minimum 3.0' requirement for 151-600V Condition 1"
+
+      - scenario: "Switchboard SWBD-1 (480V, Condition 2) with 3.0' clearance"
+        equipment: {voltage: 480, condition: 2, depth: 3.0}
+        expected_result: FAIL
+        rationale: "Requires 3.5' minimum for 151-600V Condition 2, only 3.0' shown"
+
+      - scenario: "MCC-1 (480V, Condition 1) with 4.0' clearance"
+        equipment: {voltage: 480, condition: 1, depth: 4.0}
+        expected_result: PASS
+        rationale: "Exceeds minimum 3.0' requirement for 151-600V Condition 1"
+
+  - id: QA-NEC-110.26-002
+    description: Validate working space width clearance (NEC 110.26(A)(2))
+    severity: critical
+    category: nec_compliance
+    rationale: Width of working space must be sufficient for safe access and egress. Minimum 30\" or equipment width, whichever is greater.
+    code_reference: NEC 2023 Article 110.26(A)(2) - Width of Working Space
+    check:
+      type: numeric_range
+      field: equipment.working_space.width_inches
+      min_value: 30
+      condition: greater_than_or_equal
+      params:
+        compare_to_equipment_width: true
+        min_function: MAX(30, equipment.width_inches)
+    validation_logic: |
+      FOR EACH equipment IN electrical_equipment:
+        IF equipment.type IN ["panel", "switchboard", "mcc", "disconnect", "transformer"]:
+          equipment_width = equipment.width_inches
+          working_space_width = equipment.working_space.width_inches
+
+          required_width = MAX(30, equipment_width)
+
+          IF working_space_width < required_width:
+            FAIL: "Equipment {equipment.tag} working space width {working_space_width}\" less than required {required_width}\" (NEC 110.26(A)(2))"
+    validation_examples:
+      - scenario: "Panel 20\" wide with 30\" working space"
+        equipment: {width: 20, working_space_width: 30}
+        expected_result: PASS
+        rationale: "30\" meets minimum requirement"
+
+      - scenario: "Switchboard 42\" wide with 36\" working space"
+        equipment: {width: 42, working_space_width: 36}
+        expected_result: FAIL
+        rationale: "Working space must be at least equipment width (42\")"
+
+      - scenario: "Panel 18\" wide with 28\" working space"
+        equipment: {width: 18, working_space_width: 28}
+        expected_result: FAIL
+        rationale: "Working space less than 30\" minimum"
+
+  - id: QA-NEC-110.26-003
+    description: Validate working space height clearance (NEC 110.26(A)(3))
+    severity: critical
+    category: nec_compliance
+    rationale: Vertical clearance must extend from floor to minimum height of 6.5' or height of equipment, whichever is greater.
+    code_reference: NEC 2023 Article 110.26(A)(3) - Height of Working Space
+    check:
+      type: numeric_range
+      field: equipment.working_space.height_feet
+      min_value: 6.5
+      condition: greater_than_or_equal
+      params:
+        compare_to_equipment_height: true
+    validation_logic: |
+      FOR EACH equipment IN electrical_equipment:
+        equipment_height = equipment.height_feet
+        working_space_height = equipment.working_space.height_feet
+
+        required_height = MAX(6.5, equipment_height)
+
+        IF working_space_height < required_height:
+          FAIL: "Equipment {equipment.tag} working space height {working_space_height}' less than required {required_height}' (NEC 110.26(A)(3))"
+    validation_examples:
+      - scenario: "Panel 5' tall with 6.5' ceiling clearance"
+        equipment: {height: 5.0, working_space_height: 6.5}
+        expected_result: PASS
+        rationale: "Meets minimum 6.5' requirement"
+
+      - scenario: "Switchboard 7' tall with 6.5' ceiling clearance"
+        equipment: {height: 7.0, working_space_height: 6.5}
+        expected_result: FAIL
+        rationale: "Clearance must equal equipment height (7')"
+
+      - scenario: "Panel in room with 8' ceiling"
+        equipment: {height: 5.0, working_space_height: 8.0}
+        expected_result: PASS
+        rationale: "Exceeds minimum requirements"
+
+  - id: QA-NEC-110.26-004
+    description: Validate dedicated equipment space above panels (NEC 110.26(E))
+    severity: critical
+    category: nec_compliance
+    rationale: Space above panels to structural ceiling must be dedicated to electrical equipment. No foreign piping, ducts, or equipment allowed.
+    code_reference: NEC 2023 Article 110.26(E)(1)(a) - Dedicated Equipment Space
+    check:
+      type: custom
+      function: validate_dedicated_space_above
+      params:
+        equipment_types: ["panel", "switchboard", "mcc"]
+        zone_width: "equipment_width + working_space_width"
+        zone_depth: "equipment_depth + working_space_depth"
+        zone_height: "equipment_top to structural_ceiling"
+        foreign_objects_field: equipment.dedicated_space.obstructions
+    validation_logic: |
+      FOR EACH equipment IN electrical_equipment:
+        IF equipment.type IN ["panel", "switchboard", "mcc"]:
+          dedicated_space = equipment.dedicated_space
+
+          # Check for foreign obstructions
+          obstructions = dedicated_space.obstructions
+          prohibited = ["duct", "pipe", "sprinkler", "cable_tray_non_electrical"]
+
+          FOR EACH obstruction IN obstructions:
+            IF obstruction.type IN prohibited:
+              FAIL: "Equipment {equipment.tag} has {obstruction.type} in dedicated space above panel (NEC 110.26(E))"
+
+          # Verify zone dimensions
+          IF NOT dedicated_space.extends_to_ceiling:
+            FAIL: "Equipment {equipment.tag} dedicated space must extend to structural ceiling (NEC 110.26(E)(1))"
+    validation_examples:
+      - scenario: "Panel LP-2A with dedicated space clear to ceiling, no obstructions"
+        obstructions: []
+        extends_to_ceiling: true
+        expected_result: PASS
+        rationale: "Dedicated space maintained"
+
+      - scenario: "Panel with HVAC supply duct 2' above panel top"
+        obstructions: [{type: "duct", location: "2' above"}]
+        expected_result: FAIL
+        rationale: "Duct violates dedicated equipment space (NEC 110.26(E))"
+
+      - scenario: "Switchboard with fire protection sprinkler pipe 3' above"
+        obstructions: [{type: "sprinkler", location: "3' above"}]
+        expected_result: FAIL
+        rationale: "Sprinkler pipe not permitted in dedicated space (unless protecting electrical equipment)"
+
+  - id: QA-NEC-408.4-001
+    description: Validate panelboard identification and circuit directory (NEC 408.4)
+    severity: high
+    category: nec_compliance
+    rationale: Panelboards must be permanently marked with manufacturer name, voltage, current rating, and circuit directory identifying loads.
+    code_reference: NEC 2023 Article 408.4 - Circuit Directory or Circuit Identification
+    check:
+      type: field_presence
+      fields:
+        - panel_schedule.panel_tag
+        - panel_schedule.manufacturer
+        - panel_schedule.voltage
+        - panel_schedule.main_breaker_rating
+        - panel_schedule.circuits.*.circuit_number
+        - panel_schedule.circuits.*.load_description
+      condition: not null
+    validation_logic: |
+      FOR EACH panel IN panel_schedules:
+        # Check panel identification
+        IF panel.panel_tag IS NULL:
+          FAIL: "Panel missing panel tag (NEC 408.4)"
+
+        IF panel.manufacturer IS NULL:
+          WARN: "Panel {panel.panel_tag} missing manufacturer (NEC 408.4)"
+
+        IF panel.voltage IS NULL OR panel.main_breaker_rating IS NULL:
+          FAIL: "Panel {panel.panel_tag} missing voltage or main breaker rating (NEC 408.4)"
+
+        # Check circuit directory
+        FOR EACH circuit IN panel.circuits:
+          IF circuit.circuit_number IS NULL:
+            FAIL: "Panel {panel.panel_tag} has circuit with no number"
+
+          IF circuit.load_description IS NULL OR circuit.load_description == "":
+            FAIL: "Panel {panel.panel_tag} circuit {circuit.circuit_number} has no load description (NEC 408.4)"
+
+          # Check for generic/inadequate descriptions
+          IF circuit.load_description IN ["SPARE", "RECEPTACLES", "LIGHTS"]:
+            WARN: "Panel {panel.panel_tag} circuit {circuit.circuit_number} has generic description - provide specific location or room number"
+    validation_examples:
+      - scenario: "Panel schedule with all fields populated, specific circuit descriptions"
+        panel: {tag: "LP-1A", mfr: "Square D", voltage: 208, rating: 100, circuits: [{num: 1, desc: "Room 101 Receptacles"}]}
+        expected_result: PASS
+        rationale: "Complete panel identification and circuit directory"
+
+      - scenario: "Panel schedule missing circuit load descriptions"
+        panel: {tag: "LP-2A", circuits: [{num: 3, desc: null}]}
+        expected_result: FAIL
+        rationale: "Circuit directory incomplete (NEC 408.4)"
+
+      - scenario: "Panel schedule with generic descriptions only"
+        panel: {tag: "LP-3A", circuits: [{num: 5, desc: "RECEPTACLES"}]}
+        expected_result: WARN
+        rationale: "Generic description - should specify room or area"
+
+  - id: QA-NEC-110.16-001
+    description: Validate arc flash warning labels are present on electrical equipment (NEC 110.16)
+    severity: critical
+    category: nec_compliance
+    rationale: Arc flash labels are life-safety critical. Equipment likely to require examination/adjustment while energized must be field or factory marked.
+    code_reference: NEC 2023 Article 110.16 - Arc-Flash Hazard Warning
+    check:
+      type: field_presence
+      fields:
+        - equipment.arc_flash_label.present
+      condition: equals true
+      params:
+        equipment_types: ["panel", "switchboard", "mcc", "disconnect", "transformer"]
+        voltage_threshold: 50  # Volts, above which arc flash label required
+    validation_logic: |
+      FOR EACH equipment IN electrical_equipment:
+        voltage = equipment.voltage
+
+        IF voltage >= 50:  # Arc flash concern above 50V
+          IF equipment.type IN ["panel", "switchboard", "mcc", "disconnect", "transformer"]:
+            IF NOT equipment.arc_flash_label.present:
+              FAIL: "Equipment {equipment.tag} ({voltage}V) missing arc flash warning label (NEC 110.16)"
+
+            # Check label content (if available)
+            IF equipment.arc_flash_label.present:
+              label = equipment.arc_flash_label
+              IF label.incident_energy IS NULL OR label.arc_flash_boundary IS NULL:
+                WARN: "Equipment {equipment.tag} arc flash label missing incident energy or boundary"
+    validation_examples:
+      - scenario: "480V panel with arc flash label showing incident energy and boundary"
+        equipment: {voltage: 480, arc_flash_label: {present: true, incident_energy: "8.2 cal/cm²", boundary: "36 inches"}}
+        expected_result: PASS
+        rationale: "Arc flash label present with required information"
+
+      - scenario: "208V switchboard with no arc flash label notation on drawings"
+        equipment: {voltage: 208, arc_flash_label: {present: false}}
+        expected_result: FAIL
+        rationale: "Arc flash label required for voltage ≥50V (NEC 110.16)"
+
+      - scenario: "120V panel (below 50V threshold)"
+        equipment: {voltage: 120, arc_flash_label: {present: true}}
+        expected_result: PASS
+        rationale: "Label present, though threshold technically 50V+"
+
+  - id: QA-NEC-210.8-001
+    description: Validate GFCI protection in dwelling unit bathrooms (NEC 210.8(A)(1))
+    severity: critical
+    category: nec_compliance
+    rationale: GFCI protection in bathrooms prevents electrocution from ground faults near water sources. Code-required life safety.
+    code_reference: NEC 2023 Article 210.8(A)(1) - GFCI Protection for Dwelling Unit Bathrooms
+    check:
+      type: custom
+      function: validate_gfci_bathroom_dwelling
+      params:
+        occupancy_type: "dwelling"
+        space_type: "bathroom"
+        receptacle_field: receptacles
+        gfci_field: receptacles.gfci_protected
+    validation_logic: |
+      IF project.occupancy_type == "dwelling":
+        bathrooms = FILTER_SPACES_BY_TYPE("bathroom")
+
+        FOR EACH bathroom IN bathrooms:
+          receptacles = FIND_RECEPTACLES_IN_SPACE(bathroom)
+
+          IF LENGTH(receptacles) == 0:
+            WARN: "Bathroom {bathroom.name} has no receptacles shown (NEC 210.52(D) requires at least one)"
+
+          FOR EACH receptacle IN receptacles:
+            IF NOT receptacle.gfci_protected:
+              FAIL: "Bathroom {bathroom.name} receptacle {receptacle.tag} not GFCI protected (NEC 210.8(A)(1))"
+    validation_examples:
+      - scenario: "Dwelling unit bathroom with GFCI receptacle"
+        receptacles: [{tag: "R-101", gfci_protected: true, location: "Bathroom"}]
+        expected_result: PASS
+        rationale: "GFCI protection provided per NEC 210.8(A)(1)"
+
+      - scenario: "Dwelling bathroom with standard receptacle (no GFCI)"
+        receptacles: [{tag: "R-205", gfci_protected: false, location: "Master Bath"}]
+        expected_result: FAIL
+        rationale: "Bathroom receptacle must be GFCI protected (NEC 210.8(A)(1))"
+
+      - scenario: "Commercial building bathroom"
+        occupancy: "commercial"
+        expected_result: PASS  # Different rule applies (210.8(B))
+        rationale: "NEC 210.8(A) applies to dwelling units only"
+
+  - id: QA-NEC-210.8-002
+    description: Validate GFCI protection in dwelling unit kitchens (NEC 210.8(A)(6))
+    severity: critical
+    category: nec_compliance
+    rationale: GFCI protection for kitchen counter receptacles prevents shock hazards near sinks and wet conditions.
+    code_reference: NEC 2023 Article 210.8(A)(6) - GFCI Protection for Dwelling Unit Kitchen Countertops
+    check:
+      type: custom
+      function: validate_gfci_kitchen_countertop
+      params:
+        occupancy_type: "dwelling"
+        space_type: "kitchen"
+        receptacle_location: "countertop"
+    validation_logic: |
+      IF project.occupancy_type == "dwelling":
+        kitchens = FILTER_SPACES_BY_TYPE("kitchen")
+
+        FOR EACH kitchen IN kitchens:
+          receptacles = FIND_RECEPTACLES_IN_SPACE(kitchen)
+
+          countertop_receptacles = FILTER(receptacles, location="countertop")
+
+          FOR EACH receptacle IN countertop_receptacles:
+            IF NOT receptacle.gfci_protected:
+              FAIL: "Kitchen {kitchen.name} countertop receptacle {receptacle.tag} not GFCI protected (NEC 210.8(A)(6))"
+    validation_examples:
+      - scenario: "Kitchen countertop receptacles with GFCI protection"
+        receptacles: [{tag: "R-K01", location: "countertop", gfci_protected: true}]
+        expected_result: PASS
+        rationale: "Countertop receptacles GFCI protected per NEC 210.8(A)(6)"
+
+      - scenario: "Kitchen floor receptacle (not countertop) without GFCI"
+        receptacles: [{tag: "R-K05", location: "floor", gfci_protected: false}]
+        expected_result: PASS
+        rationale: "GFCI requirement specific to countertop receptacles"
+
+      - scenario: "Kitchen countertop receptacle missing GFCI"
+        receptacles: [{tag: "R-K02", location: "countertop", gfci_protected: false}]
+        expected_result: FAIL
+        rationale: "NEC 210.8(A)(6) requires GFCI for countertop receptacles"
+
+  - id: QA-NEC-210.8-ALL
+    description: Validate GFCI protection for all 11 required dwelling unit locations (NEC 210.8(A))
+    severity: critical
+    category: nec_compliance
+    rationale: Comprehensive GFCI validation across all NEC 210.8(A) required locations prevents life-safety omissions.
+    code_reference: NEC 2023 Article 210.8(A) - GFCI Protection for Dwelling Units (All 11 Locations)
+    check:
+      type: custom
+      function: validate_gfci_all_locations
+      params:
+        required_locations:
+          - bathrooms  # (A)(1)
+          - garages  # (A)(2)
+          - outdoors  # (A)(3)
+          - crawl_spaces  # (A)(4)
+          - unfinished_basements  # (A)(5)
+          - kitchen_countertops  # (A)(6)
+          - sinks  # (A)(7) - within 6 feet
+          - boathouses  # (A)(8)
+          - bathtubs_shower_stalls  # (A)(9) - within 6 feet
+          - laundry_areas  # (A)(10)
+          - indoor_damp_locations  # (A)(11)
+    validation_logic: |
+      # NEC 210.8(A) - ALL 11 GFCI LOCATIONS FOR DWELLINGS
+
+      gfci_locations = {
+        "bathrooms": "210.8(A)(1)",
+        "garages": "210.8(A)(2)",
+        "outdoors": "210.8(A)(3)",
+        "crawl_spaces": "210.8(A)(4)",
+        "unfinished_basements": "210.8(A)(5)",
+        "kitchen_countertops": "210.8(A)(6)",
+        "sinks": "210.8(A)(7) - within 6 feet",
+        "boathouses": "210.8(A)(8)",
+        "bathtubs_showers": "210.8(A)(9) - within 6 feet",
+        "laundry": "210.8(A)(10)",
+        "indoor_damp": "210.8(A)(11)"
+      }
+
+      IF project.occupancy_type == "dwelling":
+        FOR EACH location_type, code_ref IN gfci_locations:
+          spaces = FILTER_SPACES_BY_TYPE(location_type)
+
+          FOR EACH space IN spaces:
+            receptacles = FIND_RECEPTACLES_IN_SPACE(space)
+
+            # Special distance rules for sinks and bathtubs/showers
+            IF location_type IN ["sinks", "bathtubs_showers"]:
+              receptacles = FILTER_BY_DISTANCE(receptacles, max_distance_feet=6)
+
+            FOR EACH receptacle IN receptacles:
+              IF NOT receptacle.gfci_protected:
+                FAIL: "Receptacle {receptacle.tag} in {location_type} ({space.name}) not GFCI protected (NEC {code_ref})"
+    validation_examples:
+      - scenario: "All 11 dwelling unit GFCI locations properly protected"
+        all_gfci_locations_have_protection: true
+        expected_result: PASS
+        rationale: "Comprehensive GFCI compliance per NEC 210.8(A)"
+
+      - scenario: "Garage receptacle missing GFCI protection"
+        receptacles: [{tag: "R-GAR01", location: "garage", gfci_protected: false}]
+        expected_result: FAIL
+        rationale: "Garage receptacles require GFCI (NEC 210.8(A)(2))"
+
+      - scenario: "Laundry room receptacle without GFCI"
+        receptacles: [{tag: "R-LAUN", location: "laundry", gfci_protected: false}]
+        expected_result: FAIL
+        rationale: "Laundry area receptacles require GFCI (NEC 210.8(A)(10))"
+
+  - id: QA-NEC-210.12-001
+    description: Validate AFCI protection in dwelling unit areas (NEC 210.12)
+    severity: critical
+    category: nec_compliance
+    rationale: Arc-fault circuit interrupters (AFCIs) prevent electrical fires from arcing faults in branch circuits. Required in dwelling bedrooms, living areas, and more.
+    code_reference: NEC 2023 Article 210.12 - Arc-Fault Circuit-Interrupter Protection
+    check:
+      type: custom
+      function: validate_afci_protection
+      params:
+        occupancy_type: "dwelling"
+        required_areas:
+          - family_rooms
+          - dining_rooms
+          - living_rooms
+          - parlors
+          - libraries
+          - dens
+          - bedrooms
+          - sunrooms
+          - recreation_rooms
+          - closets
+          - hallways
+          - laundry_areas
+          - similar_rooms
+    validation_logic: |
+      IF project.occupancy_type == "dwelling":
+        afci_required_spaces = FILTER_SPACES_BY_TYPE([
+          "bedroom", "living_room", "family_room", "dining_room",
+          "den", "library", "sunroom", "recreation_room", "hallway",
+          "closet", "laundry"
+        ])
+
+        FOR EACH space IN afci_required_spaces:
+          circuits = FIND_CIRCUITS_SERVING_SPACE(space)
+
+          FOR EACH circuit IN circuits:
+            # Check if circuit originates from AFCI breaker or has AFCI outlet protection
+            IF NOT (circuit.afci_breaker OR circuit.afci_outlet_protection):
+              FAIL: "Circuit {circuit.number} serving {space.type} ({space.name}) not AFCI protected (NEC 210.12)"
+    validation_examples:
+      - scenario: "Bedroom circuits with AFCI breakers"
+        circuits: [{num: 5, space: "Bedroom 1", afci_breaker: true}]
+        expected_result: PASS
+        rationale: "AFCI protection provided per NEC 210.12"
+
+      - scenario: "Living room circuit without AFCI"
+        circuits: [{num: 8, space: "Living Room", afci_breaker: false}]
+        expected_result: FAIL
+        rationale: "Living room requires AFCI protection (NEC 210.12(A))"
+
+      - scenario: "Bathroom circuit (not in AFCI list)"
+        circuits: [{num: 12, space: "Bathroom", afci_breaker: false}]
+        expected_result: PASS
+        rationale: "Bathrooms not explicitly required to have AFCI (GFCI required instead)"
+
+  - id: QA-NEC-700.10-001
+    description: Validate emergency system wiring separation (NEC 700.10(B)(5))
+    severity: critical
+    category: nec_compliance
+    rationale: Emergency system wiring must be physically separated from normal wiring to prevent loss of emergency power during normal system faults.
+    code_reference: NEC 2023 Article 700.10(B)(5) - Wiring Design and Location
+    check:
+      type: custom
+      function: validate_emergency_wiring_separation
+      params:
+        emergency_circuits_field: circuits.emergency
+        normal_circuits_field: circuits.normal
+        separation_requirements:
+          - separate_raceways: true
+          - separate_cable_trays: true
+          - separate_junction_boxes: true
+          - minimum_separation_inches: 0  # Physical separation, any distance
+    validation_logic: |
+      emergency_circuits = FILTER_CIRCUITS(type="emergency")
+      normal_circuits = FILTER_CIRCUITS(type="normal")
+
+      FOR EACH emergency_circuit IN emergency_circuits:
+        # Check for shared raceways
+        emergency_raceways = emergency_circuit.raceways
+        FOR EACH normal_circuit IN normal_circuits:
+          normal_raceways = normal_circuit.raceways
+
+          shared_raceways = INTERSECTION(emergency_raceways, normal_raceways)
+          IF LENGTH(shared_raceways) > 0:
+            FAIL: "Emergency circuit {emergency_circuit.number} shares raceway {shared_raceways[0]} with normal circuit {normal_circuit.number} (NEC 700.10(B)(5))"
+
+        # Check for shared junction boxes
+        IF emergency_circuit.shares_junction_boxes_with_normal:
+          FAIL: "Emergency circuit {emergency_circuit.number} shares junction boxes with normal circuits (NEC 700.10(B)(5))"
+    validation_examples:
+      - scenario: "Emergency lighting circuit in dedicated conduit, separate junction boxes"
+        emergency_circuit: {num: "EM-1", raceways: ["C-EM1"], shared_jboxes: false}
+        normal_circuits: [{num: 3, raceways: ["C-1", "C-2"]}]
+        expected_result: PASS
+        rationale: "Emergency and normal wiring physically separated"
+
+      - scenario: "Emergency circuit shares conduit with normal lighting"
+        emergency_circuit: {num: "EM-2", raceways: ["C-5"]}
+        normal_circuits: [{num: 8, raceways: ["C-5"]}]
+        expected_result: FAIL
+        rationale: "NEC 700.10(B)(5) prohibits sharing raceways"
+
+      - scenario: "Emergency exit signs wired separately from normal receptacles"
+        emergency_circuit: {num: "EM-3", raceways: ["C-EM2"]}
+        normal_circuits: [{num: 10, raceways: ["C-6"]}]
+        expected_result: PASS
+        rationale: "Separate raceways maintain emergency system integrity"
+
+  - id: QA-NEC-700.7-001
+    description: Validate emergency system transfer switch separation from normal service (NEC 700.7)
+    severity: critical
+    category: nec_compliance
+    rationale: Automatic transfer switches for emergency systems must be located/installed to prevent simultaneous failure with normal service during fire/fault.
+    code_reference: NEC 2023 Article 700.7 - Signals, Transfer Switches
+    check:
+      type: custom
+      function: validate_transfer_switch_separation
+      params:
+        transfer_switch_field: equipment.transfer_switches
+        normal_service_field: equipment.service_entrance
+        minimum_fire_separation: true
+        separate_location_preferred: true
+    validation_logic: |
+      transfer_switches = FILTER_EQUIPMENT(type="automatic_transfer_switch", system="emergency")
+      normal_service = FIND_EQUIPMENT(type="service_entrance")
+
+      FOR EACH ats IN transfer_switches:
+        # Check if ATS is in same room/enclosure as normal service
+        IF ats.location.room == normal_service.location.room:
+          WARN: "Transfer switch {ats.tag} in same room as normal service - verify fire separation per NEC 700.7"
+
+        # Check for fire-rated separation
+        IF NOT ats.fire_separated_from_normal_service:
+          FAIL: "Transfer switch {ats.tag} not adequately separated from normal service equipment (NEC 700.7)"
+    validation_examples:
+      - scenario: "ATS in separate electrical room with 2-hr fire-rated wall from normal service"
+        ats: {tag: "ATS-1", fire_separated: true, location: "EM Electrical Room"}
+        service: {location: "Main Electrical Room"}
+        expected_result: PASS
+        rationale: "Fire-rated separation prevents simultaneous failure"
+
+      - scenario: "ATS mounted adjacent to main switchboard, no fire separation"
+        ats: {tag: "ATS-2", fire_separated: false, location: "Main Electrical Room"}
+        service: {location: "Main Electrical Room"}
+        expected_result: FAIL
+        rationale: "Inadequate separation per NEC 700.7"
+
+      - scenario: "ATS on separate floor with concrete slab separation"
+        ats: {tag: "ATS-3", fire_separated: true, location: "Mezzanine"}
+        service: {location: "Ground Floor"}
+        expected_result: PASS
+        rationale: "Physical separation via fire-rated construction"
+
+  - id: QA-NEC-110.26-005
+    description: Validate clearance for opening equipment doors (NEC 110.26(A)(2))
+    severity: high
+    category: nec_compliance
+    rationale: Equipment doors and hinged panels must be able to open to 90° minimum. Obstructions prevent safe access.
+    code_reference: NEC 2023 Article 110.26(A)(2) - Clear Spaces
+    check:
+      type: custom
+      function: validate_door_swing_clearance
+      params:
+        equipment_types: ["panel", "switchboard", "mcc"]
+        door_opening_angle: 90  # degrees minimum
+    validation_logic: |
+      FOR EACH equipment IN electrical_equipment:
+        IF equipment.type IN ["panel", "switchboard", "mcc"]:
+          IF equipment.has_hinged_door:
+            door_swing_arc = CALCULATE_DOOR_SWING_ARC(equipment.door_width, 90)
+
+            # Check for obstructions in swing path
+            obstructions_in_path = CHECK_OBSTRUCTIONS_IN_ARC(door_swing_arc)
+
+            IF LENGTH(obstructions_in_path) > 0:
+              FAIL: "Equipment {equipment.tag} door swing obstructed by {obstructions_in_path[0].type} (NEC 110.26(A)(2))"
+    validation_examples:
+      - scenario: "Panel door can swing 90° with no obstructions"
+        equipment: {door_swing_clear: true}
+        expected_result: PASS
+        rationale: "Door opening clearance maintained"
+
+      - scenario: "Switchboard door swing blocked by structural column"
+        equipment: {door_swing_clear: false, obstruction: "column"}
+        expected_result: FAIL
+        rationale: "NEC 110.26(A)(2) requires unobstructed door opening"
+
+      - scenario: "Panel door opens 180° (full swing)"
+        equipment: {door_swing_angle: 180}
+        expected_result: PASS
+        rationale: "Exceeds minimum 90° requirement"
+
+  - id: QA-NEC-250.66-001
+    description: Validate grounding electrode conductor sizing (NEC 250.66)
+    severity: critical
+    category: nec_compliance
+    rationale: Grounding electrode conductor must be sized per NEC Table 250.66 based on service conductor size. Undersized GEC compromises system grounding.
+    code_reference: NEC 2023 Article 250.66, Table 250.66 - Size of AC Grounding Electrode Conductor
+    check:
+      type: custom
+      function: validate_grounding_conductor_size
+      params:
+        service_conductor_field: service.phase_conductor_size
+        grounding_conductor_field: service.grounding_electrode_conductor_size
+        table_250_66: true
+    validation_logic: |
+      # NEC Table 250.66 (simplified - copper conductors)
+      gec_sizing_table = {
+        "2 AWG or smaller": "8 AWG",
+        "1 AWG or 1/0 AWG": "6 AWG",
+        "2/0 or 3/0 AWG": "4 AWG",
+        "Over 3/0 through 350 kcmil": "2 AWG",
+        "Over 350 through 600 kcmil": "1/0 AWG",
+        "Over 600 through 1100 kcmil": "2/0 AWG",
+        "Over 1100 kcmil": "3/0 AWG"
+      }
+
+      service_conductor_size = service.phase_conductor_size
+      actual_gec_size = service.grounding_electrode_conductor_size
+
+      required_gec_size = LOOKUP_TABLE_250_66(service_conductor_size)
+
+      IF AWG_SIZE(actual_gec_size) < AWG_SIZE(required_gec_size):
+        FAIL: "Grounding electrode conductor {actual_gec_size} undersized for service conductor {service_conductor_size}, requires {required_gec_size} per NEC Table 250.66"
+    validation_examples:
+      - scenario: "Service with 4/0 AWG phase conductors, 2 AWG GEC"
+        service: {phase_conductor: "4/0 AWG", gec: "2 AWG"}
+        expected_result: PASS
+        rationale: "2 AWG GEC adequate for 4/0 AWG service per Table 250.66"
+
+      - scenario: "Service with 500 kcmil conductors, 2 AWG GEC"
+        service: {phase_conductor: "500 kcmil", gec: "2 AWG"}
+        expected_result: FAIL
+        rationale: "Requires 1/0 AWG GEC for 500 kcmil service (Table 250.66)"
+
+      - scenario: "Service with 2 AWG phase, 8 AWG GEC"
+        service: {phase_conductor: "2 AWG", gec: "8 AWG"}
+        expected_result: PASS
+        rationale: "8 AWG GEC meets minimum for 2 AWG service"
+
+  - id: QA-NEC-240.4-001
+    description: Validate conductor ampacity vs OCPD rating (NEC 240.4)
+    severity: critical
+    category: nec_compliance
+    rationale: Conductors must be protected by overcurrent device not exceeding conductor ampacity. Prevents conductor overheating and fire.
+    code_reference: NEC 2023 Article 240.4(B) - Devices Rated 800 Amperes or Less
+    check:
+      type: custom
+      function: validate_conductor_protection
+      params:
+        circuit_field: circuits
+        conductor_ampacity_field: circuits.conductor_ampacity
+        ocpd_rating_field: circuits.breaker_rating
+    validation_logic: |
+      FOR EACH circuit IN circuits:
+        conductor_ampacity = circuit.conductor_ampacity
+        breaker_rating = circuit.breaker_rating
+
+        # NEC 240.4(B) - OCPD must not exceed conductor ampacity
+        IF breaker_rating > conductor_ampacity:
+          # Check for standard size exceptions (240.4(B))
+          IF breaker_rating IN [15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]:
+            # Standard sizes allowed if conductor ampacity falls between sizes
+            next_lower_standard = FIND_NEXT_LOWER_STANDARD_SIZE(breaker_rating)
+            IF conductor_ampacity < next_lower_standard:
+              FAIL: "Circuit {circuit.number} conductor ampacity {conductor_ampacity}A less than OCPD {breaker_rating}A (NEC 240.4(B))"
+          ELSE:
+            FAIL: "Circuit {circuit.number} OCPD rating {breaker_rating}A exceeds conductor ampacity {conductor_ampacity}A (NEC 240.4(B))"
+    validation_examples:
+      - scenario: "12 AWG conductor (20A ampacity) with 20A breaker"
+        circuit: {conductor_ampacity: 20, breaker_rating: 20}
+        expected_result: PASS
+        rationale: "OCPD matches conductor ampacity"
+
+      - scenario: "12 AWG conductor (20A) with 30A breaker"
+        circuit: {conductor_ampacity: 20, breaker_rating: 30}
+        expected_result: FAIL
+        rationale: "OCPD exceeds conductor ampacity (NEC 240.4(B))"
+
+      - scenario: "10 AWG conductor (30A) with 25A breaker"
+        circuit: {conductor_ampacity: 30, breaker_rating: 25}
+        expected_result: PASS
+        rationale: "OCPD less than conductor ampacity (safe)"
+
+  - id: QA-NEC-240.12-001
+    description: Validate overcurrent device coordination (NEC 240.12)
+    severity: high
+    category: nec_compliance
+    rationale: Where required, overcurrent devices must be coordinated to minimize outage extent. Selective coordination critical for emergency systems, elevators, critical operations.
+    code_reference: NEC 2023 Article 240.12 - Electrical System Coordination
+    check:
+      type: custom
+      function: validate_ocpd_coordination
+      params:
+        coordination_required_systems: ["emergency", "elevator", "critical_operations"]
+        coordination_study_field: project.coordination_study_performed
+    validation_logic: |
+      # Identify systems requiring coordination
+      systems_requiring_coordination = []
+
+      IF project.has_emergency_systems:
+        systems_requiring_coordination.APPEND("emergency")
+
+      IF project.has_elevators:
+        systems_requiring_coordination.APPEND("elevator")
+
+      IF project.has_critical_operations:
+        systems_requiring_coordination.APPEND("critical_operations")
+
+      IF LENGTH(systems_requiring_coordination) > 0:
+        # Verify coordination study performed
+        IF NOT project.coordination_study_performed:
+          FAIL: "Project has systems requiring selective coordination ({systems_requiring_coordination}) but no coordination study indicated (NEC 240.12)"
+
+        # Check for coordination notation on one-line diagram
+        IF NOT drawings.one_line_diagram.coordination_noted:
+          WARN: "One-line diagram should note selective coordination for {systems_requiring_coordination} (NEC 240.12)"
+    validation_examples:
+      - scenario: "Project with emergency system and coordination study noted on drawings"
+        project: {emergency_systems: true, coordination_study: true}
+        expected_result: PASS
+        rationale: "Selective coordination addressed per NEC 240.12"
+
+      - scenario: "Elevator system present but no coordination study"
+        project: {elevators: true, coordination_study: false}
+        expected_result: FAIL
+        rationale: "Elevator feeders require selective coordination (NEC 240.12)"
+
+      - scenario: "No systems requiring coordination"
+        project: {emergency_systems: false, elevators: false}
+        expected_result: PASS
+        rationale: "NEC 240.12 coordination not required"
+
+  - id: QA-NEC-220.82-001
+    description: Validate dwelling unit service load calculation method used (NEC 220.82 optional method)
+    severity: medium
+    category: nec_compliance
+    rationale: When using NEC 220.82 optional method for dwellings, verify calculation methodology matches code requirements and results in adequate service size.
+    code_reference: NEC 2023 Article 220.82 - Dwelling Unit Optional Method
+    check:
+      type: custom
+      function: validate_dwelling_service_calculation
+      params:
+        occupancy_type: "dwelling"
+        calculation_method_field: load_calculation.method
+        load_components_field: load_calculation.components
+    validation_logic: |
+      IF project.occupancy_type == "dwelling":
+        IF load_calculation.method == "NEC_220.82_Optional":
+          # Verify required components present
+          required_components = [
+            "general_lighting_receptacles",  # @ 3 VA/sq ft
+            "small_appliance_laundry",       # 1500 VA each
+            "nameplate_rating_appliances",   # ranges, HVAC, etc.
+          ]
+
+          FOR EACH component IN required_components:
+            IF component NOT IN load_calculation.components:
+              FAIL: "Dwelling load calculation using 220.82 missing required component: {component}"
+
+          # Verify demand factors applied correctly
+          IF load_calculation.demand_factors_applied != TRUE:
+            WARN: "Verify demand factors per NEC Table 220.82 applied to dwelling load calculation"
+    validation_examples:
+      - scenario: "Dwelling using NEC 220.82 optional method with all components"
+        load_calc: {method: "NEC_220.82_Optional", components: ["lighting", "appliances", "hvac"], demand_factors: true}
+        expected_result: PASS
+        rationale: "Proper application of NEC 220.82 optional method"
+
+      - scenario: "Dwelling calculation missing small appliance/laundry loads"
+        load_calc: {method: "NEC_220.82_Optional", components: ["lighting", "hvac"]}
+        expected_result: FAIL
+        rationale: "Incomplete load calculation per NEC 220.82"
+
+      - scenario: "Commercial building (not dwelling)"
+        occupancy: "commercial"
+        expected_result: PASS
+        rationale: "NEC 220.82 applies to dwelling units only"
+
+# Custom Validation Functions (Pseudocode Implementation)
+
+custom_functions:
+  validate_working_space_clearance:
+    description: "Validates NEC 110.26(A)(1) working space depths based on voltage and condition"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-110.26-001
+
+  validate_dedicated_space_above:
+    description: "Validates NEC 110.26(E) dedicated equipment space above panels"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-110.26-004
+
+  validate_gfci_all_locations:
+    description: "Comprehensive GFCI validation for all 11 NEC 210.8(A) locations"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-210.8-ALL
+
+  validate_afci_protection:
+    description: "Validates AFCI protection per NEC 210.12 for dwelling units"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-210.12-001
+
+  validate_emergency_wiring_separation:
+    description: "Validates emergency wiring separation per NEC 700.10(B)(5)"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-700.10-001
+
+  validate_conductor_protection:
+    description: "Validates conductor ampacity vs OCPD rating per NEC 240.4"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-240.4-001
+
+  validate_ocpd_coordination:
+    description: "Validates selective coordination requirements per NEC 240.12"
+    implementation: |
+      # Implementation shown inline in rule QA-NEC-240.12-001
+
+# Integration with SKILL.md Workflow
+
+workflow_integration:
+  nec_compliance_validation:
+    description: "This ruleset provides NEC-specific code compliance checks integrated into SKILL.md QA workflow"
+    workflow_steps:
+      - step_2_load_rules: "Load QA_NEC_Code_Compliance.yaml as part of electrical discipline rules"
+      - step_3_execute_validation: "Apply custom NEC validation logic against extracted drawing data"
+      - step_4_aggregate_results: "Group failures by severity (critical NEC violations prioritized)"
+      - step_5_generate_report: "Include NEC article references in compliance report"
+
+  usage_example: |
+    # Electrical plan QA validation workflow
+
+    1. Load rules: QA_NEC_Code_Compliance.yaml
+    2. Extract data: Panelboard locations, working space dimensions, GFCI/AFCI notes
+    3. Execute validation: Run QA-NEC-110.26-001 (working space depth)
+    4. Record result:
+       - Sheet: E-101
+       - Equipment: Panel LP-2A
+       - Rule ID: QA-NEC-110.26-001
+       - Status: FAIL
+       - Details: "Working space depth 2.5' less than required 3.0' (NEC 110.26(A)(1), Condition 1, 480V)"
+       - Code Reference: NEC 2023 Article 110.26(A)(1), Table 110.26(A)(1)
+
+# Version History
+version_history:
+  - version: 1.0.0
+    date: 2025-01-22
+    author: NEC Compliance Specialist (Agent 2)
+    changes: Initial creation with 20+ NEC code compliance rules covering working spaces, GFCI/AFCI, emergency systems, grounding, and conductor protection
