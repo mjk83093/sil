@@ -162,18 +162,21 @@ class CredentialLoader:
 
     def get_client_credentials(self) -> Tuple[str, str]:
         """Get best available client_id and client_secret."""
-        # 1. Environment
+        # 1. Environment (Highest priority for overrides)
         cid, csec = self._resolve_env_credentials()
         if cid and csec:
             return cid, csec
 
-        # 2. Files
+        # 2. Default to Gemini CLI (Recommended for 'CLI Parity' mode)
+        # This allows localhost redirects without custom GCP project setup
+        return GEMINI_CLI_CLIENT_ID, GEMINI_CLI_CLIENT_SECRET
+
+    def get_custom_client_credentials(self) -> Optional[Tuple[str, str]]:
+        """Optional: Get credentials from local files if specifically requested."""
         file_creds = self._load_credentials_from_known_files()
         if file_creds:
             return file_creds[0], file_creds[1]
-
-        # 3. Default
-        return GEMINI_CLI_CLIENT_ID, GEMINI_CLI_CLIENT_SECRET
+        return None
 
     def get_default_oauth_credentials(self) -> Tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
         """Used by settings.py to populate fields."""
@@ -199,26 +202,41 @@ class CredentialLoader:
     def load_cached_credentials(self) -> Optional[Credentials]:
         """Load credentials from memory, disk cache, or external sources."""
         now = time.time()
-        if self._memory_cache and (now - self._memory_cache_time < self._CACHE_TTL):
-            if self._memory_cache.valid:
-                return self._memory_cache
+        
+        # Check memory cache first
+        if self._memory_cache:
+            # If valid or can be refreshed, it's good
+            if self._memory_cache.valid or self._memory_cache.refresh_token:
+                creds = self._memory_cache
+                # Check if it needs refresh
+                if not creds.valid and creds.refresh_token:
+                    try:
+                        creds.refresh(AuthRequest())
+                        self.save_credentials(creds)
+                    except Exception as e:
+                        LOGGER.warning("Failed to refresh memory cached credentials: %s", e)
+                
+                if creds.valid:
+                    return creds
 
+        # Load from disk
         creds = self._load_cached_credentials_impl()
         
         if creds:
+            # Always ensure validity if refresh_token is present
             if not creds.valid and creds.refresh_token:
                 try:
                     creds.refresh(AuthRequest())
                     self.save_credentials(creds)
                 except Exception as e:
-                    LOGGER.warning("Failed to refresh credentials: %s", e)
-                    # Return them anyway, caller might handle re-auth
+                    LOGGER.warning("Failed to refresh disk cached credentials: %s", e)
             
             if creds.valid:
                 self._memory_cache = creds
                 self._memory_cache_time = now
+                return creds
                 
-        return creds
+        return None
 
     def _load_cached_credentials_impl(self) -> Optional[Credentials]:
         # 1. Internal cache file
@@ -265,10 +283,115 @@ class CredentialLoader:
             
         return None
 
+    def get_available_accounts(self) -> list[dict[str, str]]:
+        """Get list of available Google accounts for dropdown."""
+        accounts = []
+        for directory in CREDENTIAL_SEARCH_DIRECTORIES:
+            accounts_path = directory / "google_accounts.json"
+            if not accounts_path.exists():
+                continue
+            try:
+                with accounts_path.open("r") as f:
+                    data = json.load(f)
+                
+                all_emails = []
+                if data.get("active"):
+                    all_emails.append(data["active"])
+                if data.get("old"):
+                    all_emails.extend(data["old"])
+                
+                # Unique emails while preserving order
+                seen = set()
+                for email in all_emails:
+                    if email and email not in seen:
+                        accounts.append({"value": email, "label": email})
+                        seen.add(email)
+                
+                if accounts:
+                    return accounts
+            except Exception:
+                continue
+        return []
+
+    def set_active_email(self, email: str) -> None:
+        """Update google_accounts.json and swap token files for multi-account support."""
+        for directory in CREDENTIAL_SEARCH_DIRECTORIES:
+            accounts_path = directory / "google_accounts.json"
+            data = {"active": email, "old": []}
+            
+            if accounts_path.exists():
+                try:
+                    with accounts_path.open("r") as f:
+                        data = json.load(f)
+                except Exception:
+                    pass
+            
+            old_active = data.get("active")
+            if old_active == email:
+                return # Already active
+                
+            data["active"] = email
+            
+            if "old" not in data:
+                data["old"] = []
+            
+            if old_active and old_active != email and old_active not in data["old"]:
+                data["old"].insert(0, old_active)
+            
+            # Keep only unique emails in old list
+            data["old"] = list(dict.fromkeys(data["old"]))[:10]
+
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                with accounts_path.open("w") as f:
+                    json.dump(data, f, indent=2)
+                
+                # SWAP TOKENS
+                token_path = self._get_token_cache_path()
+                email_token_path = token_path.parent / f"oauth_creds.{email}.json"
+                
+                # If we have a specific token for this email, swap it in
+                if email_token_path.exists():
+                    import shutil
+                    # Backup current if it's not already backed up
+                    if old_active:
+                        old_token_path = token_path.parent / f"oauth_creds.{old_active}.json"
+                        if token_path.exists():
+                            shutil.copy2(token_path, old_token_path)
+                    
+                    # Copy email-specific token to main token path
+                    shutil.copy2(email_token_path, token_path)
+                    self._memory_cache = None # Clear memory cache to force reload
+                
+                return
+            except Exception as e:
+                LOGGER.warning("Failed to update active account %s: %s", accounts_path, e)
+
     def save_credentials(self, credentials: Credentials) -> None:
         token_path = self._get_token_cache_path()
+        
+        # Save in gemini-cli compatible format
+        data = {
+            "access_token": credentials.token,
+            "refresh_token": credentials.refresh_token,
+            "scope": " ".join(credentials.scopes) if credentials.scopes else "",
+            "token_type": "Bearer",
+            "id_token": getattr(credentials, "id_token", None),
+            "expiry_date": int(credentials.expiry.timestamp() * 1000) if credentials.expiry else None
+        }
+        
         with token_path.open("w", encoding="utf-8") as handle:
-            handle.write(credentials.to_json())
+            json.dump(data, handle, indent=2)
+            
+        # Also save a copy for the active email if known
+        email = self.get_active_email()
+        if email:
+            email_token_path = token_path.parent / f"oauth_creds.{email}.json"
+            try:
+                with email_token_path.open("w", encoding="utf-8") as handle:
+                    json.dump(data, handle, indent=2)
+            except Exception as e:
+                LOGGER.warning("Failed to save email-specific token: %s", e)
         
         if credentials.refresh_token:
             os.environ["GOOGLE_OAUTH_REFRESH_TOKEN"] = credentials.refresh_token

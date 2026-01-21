@@ -26,11 +26,27 @@ class OAuthCallback(ApiHandler):
         
         try:
             # Exchange code for tokens
-            tokens = antigravity.exchange_code_for_tokens(code)
+            # Pass absolute redirect URI matching what was used in generate_auth_url
+            base_url = request.url_root.rstrip('/')
+            redirect_uri = f"{base_url}/oauth_callback"
+            tokens = antigravity.exchange_code_for_tokens(code, redirect_uri=redirect_uri)
             
-            # Get user info for display
+            # Get user info for display and session
             user_info = antigravity.get_user_info(tokens.get('access_token'))
             email = user_info.get('email', 'Unknown') if user_info else 'Unknown'
+            
+            # If not authenticated, log user in
+            from flask import session
+            if not session.get('authentication'):
+                session['authentication'] = True
+                if user_info:
+                    session['google_user'] = user_info
+                
+                # If it's a direct redirect (no opener), redirect to root
+                # Otherwise return popup-closing HTML
+                # We can detect popup by checking request headers or a custom param
+                # But typically direct redirect won't have an opener
+                # Here we just return the HTML which handles both via window.opener check
             
             return Response(
                 self._get_close_popup_html(success=True, message=f"Logged in as {email}"),

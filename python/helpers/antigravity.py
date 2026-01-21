@@ -21,45 +21,18 @@ from google.auth.transport.requests import Request
 
 from python.helpers import dotenv
 
+from python.integrations.google.credentials import CredentialLoader
+from python.integrations.google.constants import SCOPES
+
 logger = logging.getLogger(__name__)
 
-# OAuth Configuration
-SCOPES = [
-    'https://www.googleapis.com/auth/cloud-platform',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile',
-    'https://www.googleapis.com/auth/cclog',
-    'https://www.googleapis.com/auth/experimentsandconfigs'
-]
-
 # Antigravity API Configuration
-ANTIGRAVITY_ENDPOINTS = [
-    'https://daily-cloudcode-pa.sandbox.googleapis.com',      # dev
-    'https://autopush-cloudcode-pa.sandbox.googleapis.com',   # staging
-    'https://cloudcode-pa.googleapis.com'                     # prod
-]
-ANTIGRAVITY_API_VERSION = 'v1internal'
-ANTIGRAVITY_HEADERS = {
-    'User-Agent': 'google-api-nodejs-client/9.15.1',
-    'X-Goog-Api-Client': 'google-cloud-sdk vscode_cloudshelleditor/0.1',
-}
-ANTIGRAVITY_DEFAULT_PROJECT_ID = 'rising-fact-p41fc'
-
-# Token cache location
-TOKEN_CACHE_DIR = Path.home() / '.agent-zero'
-TOKEN_CACHE_FILE = TOKEN_CACHE_DIR / 'token.json'
-
+# ... (rest of the constants)
 
 def get_client_config() -> Dict[str, Any]:
-    """Build OAuth client config from environment variables."""
-    client_id = dotenv.get_dotenv_value("GOOGLE_CLIENT_ID")
-    client_secret = dotenv.get_dotenv_value("GOOGLE_CLIENT_SECRET")
-    
-    if not client_id or not client_secret:
-        raise ValueError(
-            "OAuth credentials not configured. "
-            "Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in settings or .env file."
-        )
+    """Build OAuth client config using CredentialLoader defaults."""
+    loader = CredentialLoader.get_instance()
+    client_id, client_secret = loader.get_client_credentials()
     
     return {
         "installed": {
@@ -73,66 +46,84 @@ def get_client_config() -> Dict[str, Any]:
 
 
 def load_cached_credentials() -> Optional[Credentials]:
-    """Load cached OAuth credentials from disk."""
-    if not TOKEN_CACHE_FILE.exists():
-        return None
-    
-    try:
-        creds = Credentials.from_authorized_user_file(str(TOKEN_CACHE_FILE), SCOPES)
-        
-        # Refresh if expired
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            save_credentials(creds)
-        
-        return creds if creds and creds.valid else None
-    except Exception as e:
-        logger.warning(f"Failed to load cached credentials: {e}")
-        return None
+    """Load cached OAuth credentials using unified CredentialLoader."""
+    return CredentialLoader.get_instance().load_cached_credentials()
 
 
 def save_credentials(creds: Credentials) -> None:
-    """Save OAuth credentials to disk."""
-    TOKEN_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    
-    with open(TOKEN_CACHE_FILE, 'w') as f:
-        f.write(creds.to_json())
-    
-    logger.info(f"Credentials saved to {TOKEN_CACHE_FILE}")
+    """Save OAuth credentials using unified CredentialLoader."""
+    CredentialLoader.get_instance().save_credentials(creds)
 
 
 def clear_credentials() -> bool:
-    """Clear cached OAuth credentials."""
-    if TOKEN_CACHE_FILE.exists():
-        TOKEN_CACHE_FILE.unlink()
-        return True
-    return False
+    """Clear cached OAuth credentials using unified CredentialLoader."""
+    CredentialLoader.get_instance().clear_credentials()
+    return True
 
 
 def authenticate() -> Credentials:
+
+
     """
+
+
     Run OAuth flow for authentication.
-    Uses console-based flow that works in Docker/headless environments.
-    Prints auth URL and accepts authorization code.
+
+
     """
+
+
     # Check for cached credentials first
+
+
     creds = load_cached_credentials()
+
+
     if creds:
-        logger.info("Using cached credentials")
+
+
         return creds
+
+
     
+
+
     # Build OAuth flow
+
+
     client_config = get_client_config()
+
+
     flow = InstalledAppFlow.from_client_config(
+
+
         client_config, 
+
+
         SCOPES,
+
+
         redirect_uri='urn:ietf:wg:oauth:2.0:oob'  # Out-of-band flow for console
+
+
     )
+
+
     
+
+
     # Generate auth URL
+
+
     auth_url, _ = flow.authorization_url(
+
+
         prompt='consent',
+
+
         access_type='offline'
+
+
     )
     
     print("\n" + "=" * 60)
@@ -200,67 +191,24 @@ def generate_auth_url(redirect_uri: str = "http://localhost:50001/oauth_callback
     Returns:
         The authorization URL to redirect the user to
     """
-    client_id = dotenv.get_dotenv_value("GOOGLE_CLIENT_ID")
-    if not client_id:
-        raise ValueError("GOOGLE_CLIENT_ID not configured")
-    
-    params = {
-        'client_id': client_id,
-        'redirect_uri': redirect_uri,
-        'response_type': 'code',
-        'scope': ' '.join(SCOPES),
-        'access_type': 'offline',
-        'prompt': 'consent'
-    }
-    
-    return f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"
+    from python.integrations.google import auth
+    return auth.generate_auth_url(redirect_uri)
 
 
-def exchange_code_for_tokens(code: str, redirect_uri: str = "http://localhost:50001/oauth_callback") -> Dict[str, Any]:
+def exchange_code_for_tokens(code: str, redirect_uri: str = "http://localhost:50001/oauth_callback", state: Optional[str] = None) -> Dict[str, Any]:
     """
     Exchange authorization code for access and refresh tokens.
     
     Args:
         code: Authorization code from Google OAuth callback
         redirect_uri: Must match the redirect_uri used in generate_auth_url
+        state: Optional state parameter to verify
     
     Returns:
         Dict with access_token, refresh_token, etc.
     """
-    client_id = dotenv.get_dotenv_value("GOOGLE_CLIENT_ID")
-    client_secret = dotenv.get_dotenv_value("GOOGLE_CLIENT_SECRET")
-    
-    if not client_id or not client_secret:
-        raise ValueError("OAuth credentials not configured")
-    
-    response = requests.post(
-        'https://oauth2.googleapis.com/token',
-        data={
-            'client_id': client_id,
-            'client_secret': client_secret,
-            'code': code,
-            'redirect_uri': redirect_uri,
-            'grant_type': 'authorization_code'
-        }
-    )
-    
-    if not response.ok:
-        raise ValueError(f"Token exchange failed: {response.text}")
-    
-    tokens = response.json()
-    
-    # Save as credentials
-    creds = Credentials(
-        token=tokens.get('access_token'),
-        refresh_token=tokens.get('refresh_token'),
-        token_uri='https://oauth2.googleapis.com/token',
-        client_id=client_id,
-        client_secret=client_secret,
-        scopes=SCOPES
-    )
-    save_credentials(creds)
-    
-    return tokens
+    from python.integrations.google import auth
+    return auth.exchange_code_for_tokens(code, redirect_uri, state)
 
 
 def get_auth_status() -> Dict[str, Any]:
@@ -270,16 +218,9 @@ def get_auth_status() -> Dict[str, Any]:
     Returns:
         Dict with is_authenticated, email, name
     """
-    creds = load_cached_credentials()
-    if not creds or not creds.valid:
-        return {'is_authenticated': False}
-    
-    user_info = get_user_info(creds.token)
-    return {
-        'is_authenticated': True,
-        'email': user_info.get('email') if user_info else None,
-        'name': user_info.get('name') if user_info else None
-    }
+    from python.integrations.google import auth
+    return auth.get_auth_status()
+
 
 
 class AntigravityClient:
@@ -488,6 +429,7 @@ class AntigravityClient:
                     # Handle permission errors with retry
                     if response.status_code == 403:
                         error_text = response.text
+                        logger.error(f"403 Forbidden: {error_text}")
                         if any(p in error_text for p in GCP_PERMISSION_ERROR_PATTERNS):
                             if attempt < max_retries - 1:
                                 delay = min(200 * (2 ** attempt), 2000) / 1000
@@ -495,7 +437,7 @@ class AntigravityClient:
                                 time.sleep(delay)
                                 continue
                     
-                    logger.warning(f"Request failed: {response.status_code}")
+                    logger.warning(f"Request failed: {response.status_code} - {response.text}")
                     break
                 
                 except requests.RequestException as e:

@@ -585,20 +585,38 @@ def convert_out(settings: Settings) -> SettingsOutput:
     for p_type in ("chat", "embedding"):
         for provider in get_providers(p_type):
             pid_lower = provider["value"].lower()
-            if pid_lower in providers_seen:
+            if pid_lower in providers_seen or pid_lower == "antigravity":
                 continue
             providers_seen.add(pid_lower)
             api_keys_fields.append(
                 _get_api_key_field(settings, pid_lower, provider["label"])
             )
+
+    api_keys_section: SettingsSection = {
+        "id": "api_keys",
+        "title": "API Keys",
+        "description": "API keys for model providers and services used by Agent Zero. You can set multiple API keys separated by a comma (,). They will be used in round-robin fashion.<br>For more information abou Agent Zero Venice provider, see <a href='http://agent-zero.ai/?community/api-dashboard/about' target='_blank'>Agent Zero Venice</a>.",
+        "fields": api_keys_fields,
+        "tab": "external",
+    }
+
+    # Google Authentication Section
+    google_auth_fields: list[SettingsField] = []
     
-    # Add Google OAuth credentials for Antigravity provider
-    api_keys_fields.append(
-        _get_api_key_field(settings, "google_client_id", "Google OAuth Client ID")
-    )
-    api_keys_fields.append(
-        _get_api_key_field(settings, "google_client_secret", "Google OAuth Client Secret")
-    )
+    # Add Google Active Account Dropdown
+    from python.integrations.google.credentials import CredentialLoader
+    loader = CredentialLoader.get_instance()
+    available_accounts = loader.get_available_accounts()
+    active_email = loader.get_active_email()
+    
+    google_auth_fields.append({
+        "id": "google_active_account",
+        "title": "Active Google Account",
+        "description": "Select the active Google account for Gemini API calls. Switching will automatically update your authentication token.",
+        "type": "select",
+        "value": active_email or "",
+        "options": available_accounts,
+    })
     
     # Add Google OAuth Login button
     try:
@@ -614,20 +632,20 @@ def convert_out(settings: Settings) -> SettingsOutput:
         oauth_button_title = "🔐 Login with Google"
         oauth_button_action = "oauth_login"
     
-    api_keys_fields.append({
+    google_auth_fields.append({
         "id": "oauth_login_button",
-        "title": "Google OAuth Authentication",
-        "description": "Login with Google to use your subscription for Gemini and Claude models without API keys.",
+        "title": "OAuth Login/Logout",
+        "description": "Login with Google to use your personal Free Tier credits for Gemini and Cloudcode models without needing a private GCP project.",
         "type": "button",
         "value": oauth_button_title,
         "action": oauth_button_action,
     })
 
-    api_keys_section: SettingsSection = {
-        "id": "api_keys",
-        "title": "API Keys",
-        "description": "API keys for model providers and services used by Agent Zero. You can set multiple API keys separated by a comma (,). They will be used in round-robin fashion.<br>For more information abou Agent Zero Venice provider, see <a href='http://agent-zero.ai/?community/api-dashboard/about' target='_blank'>Agent Zero Venice</a>.",
-        "fields": api_keys_fields,
+    google_auth_section: SettingsSection = {
+        "id": "google_auth",
+        "title": "Google Authentication",
+        "description": "Manage your Google OAuth sessions and accounts for Gemini API access.",
+        "fields": google_auth_fields,
         "tab": "external",
     }
 
@@ -1316,6 +1334,7 @@ def convert_out(settings: Settings) -> SettingsOutput:
             memory_section,
             speech_section,
             api_keys_section,
+            google_auth_section,
             litellm_section,
             secrets_section,
             auth_section,
@@ -1360,6 +1379,10 @@ def convert_in(settings: dict) -> Settings:
                         current[field["id"]] = _env_to_dict(field["value"])
                     elif field["id"].startswith("api_key_"):
                         current["api_keys"][field["id"]] = field["value"]
+                    elif field["id"] == "google_active_account":
+                        # Trigger account switch
+                        from python.integrations.google.credentials import CredentialLoader
+                        CredentialLoader.get_instance().set_active_email(field["value"])
                     else:
                         current[field["id"]] = field["value"]
     return current

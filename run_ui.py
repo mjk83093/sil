@@ -8,8 +8,14 @@ import socket
 import struct
 from functools import wraps
 import threading
+import json
+from pathlib import Path
 from flask import Flask, request, Response, session, redirect, url_for, render_template_string
 from werkzeug.wrappers.response import Response as BaseResponse
+import requests
+import google.oauth2.credentials
+import google_auth_oauthlib.flow
+from googleapiclient.discovery import build
 import initialize
 from python.helpers import files, git, mcp_server, fasta2a_server
 from python.helpers.files import get_abs_path
@@ -18,6 +24,9 @@ from python.helpers.extract_tools import load_classes_from_folder
 from python.helpers.api import ApiHandler
 from python.helpers.print_style import PrintStyle
 from python.helpers import login
+from python.integrations.google.constants import WEB_OAUTH_SCOPES, DEFAULT_CACHE_DIR, TOKEN_CACHE_FILENAME
+from python.integrations.google.credentials import CredentialLoader
+from google.oauth2.credentials import Credentials
 
 # disable logging
 import logging
@@ -166,6 +175,34 @@ async def login_handler():
 async def logout_handler():
     session.pop('authentication', None)
     return redirect(url_for('login_handler'))
+
+# API handlers are registered automatically below
+    
+    # Save credentials for backend use (Gemini API) and sync with gemini-cli
+    try:
+        loader.save_credentials(credentials)
+    except Exception as e:
+        print(f"Failed to save credentials: {e}")
+    
+    # Use the credentials to get user info via OIDC
+    try:
+        service = build('oauth2', 'v2', credentials=credentials)
+        user_info = service.userinfo().get().execute()
+        
+        email = user_info.get('email')
+        if email:
+            loader.set_active_email(email)
+        
+        # Log the user in by setting the session variable expected by requires_auth
+        session['authentication'] = login.get_credentials_hash()
+        
+        # Optional: Store Google specific info
+        session['google_user'] = user_info
+        
+        return redirect(url_for('serve_index'))
+        
+    except Exception as e:
+        return f"Failed to get user info: {str(e)}", 500
 
 # handle default address, load index
 @webapp.route("/", methods=["GET"])

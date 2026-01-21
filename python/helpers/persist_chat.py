@@ -54,7 +54,7 @@ def save_tmp_chats():
 def load_tmp_chats():
     """Load all contexts from the chats folder"""
     _convert_v080_chats()
-    folders = files.list_files(CHATS_FOLDER, "*")
+    folders = files.get_subdirectories(CHATS_FOLDER, "*")
     json_files = []
     for folder_name in folders:
         json_files.append(_get_chat_file_path(folder_name))

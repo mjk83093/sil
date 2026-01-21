@@ -2,6 +2,10 @@ services:
   agent-zero:
     container_name: agent-zero
     image: agent0ai/agent-zero:latest
+    environment:
+      - GOOGLE_OAUTH_CONFIG_DIR=/a0/usr/Google_OAUTH
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./agent-zero:/a0
     ports:

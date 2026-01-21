@@ -3,18 +3,18 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-# Scopes for device/CLI flow
+# OAuth Scopes
 SCOPES = [
-    "https://www.googleapis.com/auth/generative-language.retriever",
-    "https://www.googleapis.com/auth/generative-language.tuning",
     "https://www.googleapis.com/auth/generative-language",
-]
-
-# Extended scopes for web OAuth flow (Unified with standard scopes for Standard Gemini)
-WEB_OAUTH_SCOPES = SCOPES.copy() + [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    "openid",
+    "https://www.googleapis.com/auth/cloud-platform",
+    "https://www.googleapis.com/auth/cclog",
+    "https://www.googleapis.com/auth/experimentsandconfigs"
 ]
+WEB_OAUTH_SCOPES = SCOPES # Same scopes for web and background usage
+
 
 AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 TOKEN_URI = "https://oauth2.googleapis.com/token"
@@ -24,16 +24,28 @@ GEMINI_CLI_CLIENT_ID = "32555940559.apps.googleusercontent.com"
 GEMINI_CLI_CLIENT_SECRET = "ZmssLNjJy2998hD4CTg2ejr2"
 
 # Cache configuration
-TOKEN_CACHE_FILENAME = "google_oauth_token.json"
+TOKEN_CACHE_FILENAME = "oauth_creds.json"
+
+_config_dir_env = os.environ.get("GOOGLE_OAUTH_CONFIG_DIR")
 _data_dir_env = os.environ.get("AGENT_ZERO_DATA_DIR")
-if _data_dir_env:
+_project_root = Path(__file__).parents[3]
+_project_oauth_dir = _project_root / "usr" / "Google_OAUTH"
+
+if _config_dir_env:
+    DEFAULT_CACHE_DIR = Path(_config_dir_env)
+elif _data_dir_env:
     DEFAULT_CACHE_DIR = Path(_data_dir_env) / "auth"
+elif _project_oauth_dir.exists() and os.access(_project_oauth_dir, os.W_OK):
+    # If we are in a bind-mounted Docker container, the project oauth dir is the best place
+    DEFAULT_CACHE_DIR = _project_oauth_dir
 else:
-    DEFAULT_CACHE_DIR = Path.home() / ".agent-zero" / "auth"
+    DEFAULT_CACHE_DIR = Path.home() / ".gemini"
 
 # Credential search paths
 CREDENTIAL_SEARCH_DIRECTORIES: Tuple[Path, ...] = (
-    Path("/usr/Google_OAUTH"),  # Primary: gemini-cli credentials location
+    DEFAULT_CACHE_DIR,          # Use the configured cache dir as primary search path
+    _project_oauth_dir,         # Project-relative credentials
+    Path("/usr/Google_OAUTH"),  # Legacy absolute path
     Path.home() / ".gemini",    # Fallback: user's home directory
 )
 

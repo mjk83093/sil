@@ -8,6 +8,9 @@ class OAuthLogout(ApiHandler):
     async def process(self, input: dict, request: Request) -> dict | Response:
         try:
             antigravity.clear_credentials()
+            from flask import session
+            session.pop('google_user', None)
+            session.pop('authentication', None)
             return {"success": True, "message": "Logged out successfully"}
         except Exception as e:
             return {"success": False, "error": str(e)}
