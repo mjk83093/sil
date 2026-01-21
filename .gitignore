@@ -49,3 +49,19 @@ agent_history.gif
 
 docs/res/dev/*
 
+
+# added by gmk on 2026-01-21T16:48:06Z
+node_modules/
+venv/
+__pycache__/
+.pytest_cache/
+dist/
+build/
+.DS_Store
+.idea/
+.vscode/
+coverage/
+.cache/
+*.log
+.env
+.env.*
